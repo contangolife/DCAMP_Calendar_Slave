@@ -218,12 +218,15 @@ with tabs[-1]:
     st.caption("각 박스의 내용을 복사해서 팀 카톡방에 붙여넣으세요.")
 
     date_keys = sorted(by_date_team.keys())
+    rendered = 0
     if not date_keys:
         st.info("조회된 일정이 없습니다.")
     else:
         for date_str in date_keys:
             team_events_for_date = by_date_team[date_str]
             sms = build_sms(date_str, team_events_for_date, my_bookings)
+            if not sms:
+                continue
             date = datetime.strptime(date_str, "%Y-%m-%d")
             weekday = WEEKDAY_KO[date.weekday()]
             st.text_area(
@@ -232,3 +235,6 @@ with tabs[-1]:
                 height=300,
                 key=f"sms_{date_str}",
             )
+            rendered += 1
+        if rendered == 0:
+            st.info("배정된 회의실이 없어 안내할 일정이 없습니다.")

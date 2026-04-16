@@ -256,6 +256,12 @@ def classify_events(events: list, room_resources: dict) -> dict:
         if start.weekday() >= 5:
             continue
 
+        # 회의실 예약 가능 시간(09:00~18:00) 밖 일정 제외
+        biz_start = start.replace(hour=9, minute=0, second=0, microsecond=0)
+        biz_end = start.replace(hour=18, minute=0, second=0, microsecond=0)
+        if start < biz_start or end > biz_end:
+            continue
+
         # 점심시간(12:00~13:00) 포함 일정 제외
         lunch_start = start.replace(hour=12, minute=0, second=0, microsecond=0)
         lunch_end = start.replace(hour=13, minute=0, second=0, microsecond=0)
@@ -444,11 +450,13 @@ def build_sms(date_str: str, team_events: dict, my_bookings: dict) -> str:
     """
     team_events: {팀: [entries]}
     my_bookings: {원본_id: 미러_이벤트} — 미러 예약 반영용
+
+    회의실이 배정된 일정만 포함. 모든 팀이 비면 빈 문자열 반환.
     """
     date = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=TZ)
     weekday = WEEKDAY_KO[date.weekday()]
-    lines = [f"💡 {date.month}/{date.day} {weekday}요일, 회의실 안내드립니다!"]
 
+    team_blocks: list[str] = []
     for team in TEAM_ORDER:
         evs = team_events.get(team)
         if not evs:
@@ -458,18 +466,28 @@ def build_sms(date_str: str, team_events: dict, my_bookings: dict) -> str:
         unique_evs = [e for e in evs if not (e["id"] in seen or seen.add(e["id"]))]
         unique_evs.sort(key=lambda x: x["start"])
 
-        lines.append(f"□ {team}")
+        team_lines: list[str] = []
         for ev in unique_evs:
             rooms = list(ev["rooms"])
-            # 미러 예약 있으면 추가
             if ev["id"] in my_bookings:
                 mirror = my_bookings[ev["id"]]
                 room_name = mirror.get("extendedProperties", {}).get("private", {}).get("room_name")
                 if room_name and room_name not in rooms:
                     rooms.append(room_name)
-            room_str = " / ".join(rooms) if rooms else "미배정"
+            if not rooms:
+                continue
+            room_str = " / ".join(rooms)
             t = f"{ev['start'].strftime('%H:%M')}~{ev['end'].strftime('%H:%M')}"
-            lines.append(f"[{room_str}] {t} {ev['title']}")
+            team_lines.append(f"[{room_str}] {t} {ev['title']}")
 
+        if team_lines:
+            team_blocks.append(f"□ {team}")
+            team_blocks.extend(team_lines)
+
+    if not team_blocks:
+        return ""
+
+    lines = [f"💡 {date.month}/{date.day} {weekday}요일, 회의실 안내드립니다!"]
+    lines.extend(team_blocks)
     lines.append("추가 일정이나 변경 사항 있으시면 반영하겠습니다. 감사합니다.")
     return "\n".join(lines)
