@@ -106,7 +106,7 @@ if errors:
 # ─────────────────────────────────────────
 tabs = st.tabs(["📅 일정 전체", "📋 문자 생성"])
 
-COL_WIDTHS = [1.4, 3.0, 1.2, 2.2, 1.8, 1.6, 1.0]
+COL_WIDTHS = [1.4, 1.3, 2.8, 1.2, 2.0, 1.8, 1.6, 1.0]
 
 with tabs[0]:
     date_keys = sorted(by_date_team.keys())
@@ -135,46 +135,48 @@ with tabs[0]:
 
             header = st.columns(COL_WIDTHS)
             header[0].caption("**팀**")
-            header[1].caption("**회의 제목**")
-            header[2].caption("**시간**")
-            header[3].caption("**참석자**")
-            header[4].caption("**회의실 현황**")
-            header[5].caption("**회의실 선택**")
-            header[6].caption("**액션**")
+            header[1].caption("**소유자**")
+            header[2].caption("**회의 제목**")
+            header[3].caption("**시간**")
+            header[4].caption("**참석자**")
+            header[5].caption("**회의실 현황**")
+            header[6].caption("**회의실 선택**")
+            header[7].caption("**액션**")
 
             for idx, ev in enumerate(all_evs):
                 row = st.columns(COL_WIDTHS)
 
                 row[0].write(" / ".join(ev.get("teams", [])) or "—")
-                row[1].write(ev["title"])
-                row[2].write(f"{ev['start'].strftime('%H:%M')}~{ev['end'].strftime('%H:%M')}")
+                row[1].write(ev.get("organizer_name") or "—")
+                row[2].write(ev["title"])
+                row[3].write(f"{ev['start'].strftime('%H:%M')}~{ev['end'].strftime('%H:%M')}")
 
                 attendees = ev.get("attendees", [])
-                row[3].write(", ".join(attendees) if attendees else "—")
+                row[4].write(", ".join(attendees) if attendees else "—")
 
                 has_original_room = bool(ev["rooms"])
                 my_booking = my_bookings.get(ev["id"])
 
                 if has_original_room:
-                    row[4].markdown(f"🏢 `{' / '.join(ev['rooms'])}` _(원본)_")
+                    row[5].markdown(f"🏢 `{' / '.join(ev['rooms'])}` _(원본)_")
                 elif my_booking:
                     room_name = (
                         my_booking.get("extendedProperties", {})
                         .get("private", {})
                         .get("room_name", "?")
                     )
-                    row[4].markdown(f"✅ `{room_name}` _(내 예약)_")
+                    row[5].markdown(f"✅ `{room_name}` _(내 예약)_")
                 else:
-                    row[4].markdown("🔴 **미배정**")
+                    row[5].markdown("🔴 **미배정**")
 
                 key_base = f"all_{date_str}_{idx}_{ev['id']}"
 
                 if has_original_room:
-                    row[5].write("—")
                     row[6].write("—")
+                    row[7].write("—")
                 elif my_booking:
-                    row[5].write("—")
-                    if row[6].button("취소", key=f"cancel_{key_base}", type="secondary"):
+                    row[6].write("—")
+                    if row[7].button("취소", key=f"cancel_{key_base}", type="secondary"):
                         with st.spinner("취소 중..."):
                             result = cancel_booking(service, ev["id"], week_offset)
                         if result["status"] == "ok":
@@ -184,13 +186,13 @@ with tabs[0]:
                         invalidate_cache()
                         st.rerun()
                 else:
-                    room_choice = row[5].selectbox(
+                    room_choice = row[6].selectbox(
                         "회의실",
                         ["선택..."] + sorted(ROOM_RESOURCES.keys()),
                         key=f"sel_{key_base}",
                         label_visibility="collapsed",
                     )
-                    if row[6].button("예약", key=f"book_{key_base}", type="primary"):
+                    if row[7].button("예약", key=f"book_{key_base}", type="primary"):
                         if room_choice == "선택...":
                             st.warning("회의실을 먼저 선택해주세요.")
                         else:

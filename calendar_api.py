@@ -273,13 +273,20 @@ def classify_events(events: list, room_resources: dict) -> dict:
             continue
 
         date_key = start.strftime("%Y-%m-%d")
+        organizer = ev.get("organizer", {}) or {}
+        organizer_email = organizer.get("email", "")
+        organizer_name = organizer.get("displayName") or (
+            organizer_email.split("@")[0] if organizer_email else ""
+        )
+
         entry = {
             "id":    ev.get("id", ""),
             "title": ev.get("summary", "(제목 없음)").strip(),
             "start": start,
             "end":   end,
             "rooms": get_booked_rooms(ev, room_resources),
-            "organizer": ev.get("organizer", {}).get("email", ""),
+            "organizer": organizer_email,
+            "organizer_name": organizer_name,
             "teams": sorted(teams, key=lambda t: TEAM_ORDER.index(t) if t in TEAM_ORDER else 99),
             "attendees": extract_attendee_names(ev),
         }
