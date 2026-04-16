@@ -245,6 +245,73 @@ def fetch_team_events(service, week_offset: int = 0) -> tuple[list, list[str]]:
     return list(event_map.values()), errors
 
 
+def _iter_event_dates(event: dict):
+    """이벤트가 커버하는 날짜 yield — 시간 있는 이벤트는 시작일, 종일 이벤트는 모든 해당일"""
+    start = event.get("start", {}) or {}
+    end = event.get("end", {}) or {}
+
+    if "dateTime" in start:
+        s = datetime.fromisoformat(start["dateTime"]).astimezone(TZ)
+        yield s.strftime("%Y-%m-%d")
+        return
+
+    if "date" in start:
+        s_date = datetime.strptime(start["date"], "%Y-%m-%d")
+        e_str = end.get("date", start["date"])
+        e_date = datetime.strptime(e_str, "%Y-%m-%d")
+        if e_date <= s_date:
+            yield s_date.strftime("%Y-%m-%d")
+            return
+        d = s_date
+        while d < e_date:  # Google 종일 이벤트의 end.date는 exclusive
+            yield d.strftime("%Y-%m-%d")
+            d += timedelta(days=1)
+
+
+def classify_events_per_person(events: list) -> dict:
+    """
+    팀원별 날짜별 이벤트 목록. 9-18 업무시간/점심 필터 없음 — 휴가/근무지/종일 이벤트 포함.
+    Returns: {date_str: {email: [events]}}
+    """
+    by_date_person: dict = defaultdict(lambda: defaultdict(list))
+    for ev in events:
+        team_emails = ev.get("_team_emails", set())
+        if not team_emails:
+            continue
+        for date_str in _iter_event_dates(ev):
+            try:
+                d = datetime.strptime(date_str, "%Y-%m-%d")
+            except ValueError:
+                continue
+            if d.weekday() >= 5:
+                continue
+            for email in team_emails:
+                if email in TEAM_MAP:
+                    by_date_person[date_str][email].append(ev)
+    return {d: dict(v) for d, v in by_date_person.items()}
+
+
+def build_email_to_name(events: list) -> dict[str, str]:
+    """팀원 이메일 → displayName (이벤트의 attendees/organizer에서 추출, 없으면 이메일 앞부분)"""
+    email_to_name: dict[str, str] = {}
+    for ev in events:
+        for att in ev.get("attendees", []) or []:
+            email = att.get("email", "")
+            if email in TEAM_MAP and email not in email_to_name:
+                name = att.get("displayName")
+                if name:
+                    email_to_name[email] = name
+        organizer = ev.get("organizer", {}) or {}
+        email = organizer.get("email", "")
+        if email in TEAM_MAP and email not in email_to_name:
+            name = organizer.get("displayName")
+            if name:
+                email_to_name[email] = name
+    for email in TEAM_MAP:
+        email_to_name.setdefault(email, email.split("@")[0])
+    return email_to_name
+
+
 def classify_events(events: list, room_resources: dict) -> dict:
     """이벤트를 {날짜: {팀: [entries]}} 구조로 변환"""
     by_date_team: dict = defaultdict(lambda: defaultdict(list))

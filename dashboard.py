@@ -5,16 +5,19 @@
     cd "구글 드라이브 프로젝트"
     streamlit run dashboard.py
 """
+import html
 from datetime import datetime, timedelta
 
 import streamlit as st
 
-from config import ROOM_RESOURCES, TEAM_ORDER, WEEKDAY_KO, TZ
+from config import ROOM_RESOURCES, TEAM_ORDER, TEAM_MAP, WEEKDAY_KO, TZ
 from calendar_api import (
     authenticate,
     fetch_team_events,
     fetch_my_bookings,
     classify_events,
+    classify_events_per_person,
+    build_email_to_name,
     book_meeting,
     cancel_booking,
     build_sms,
@@ -70,23 +73,119 @@ if cache_key not in st.session_state:
     with st.spinner("일정 조회 중..."):
         events, errors = fetch_team_events(service, week_offset)
         by_date_team = classify_events(events, ROOM_RESOURCES)
+        by_date_person = classify_events_per_person(events)
+        email_to_name = build_email_to_name(events)
         my_bookings = fetch_my_bookings(service, week_offset)
         st.session_state[cache_key] = {
-            "by_date_team": by_date_team,
-            "my_bookings":  my_bookings,
-            "errors":       errors,
+            "by_date_team":   by_date_team,
+            "by_date_person": by_date_person,
+            "email_to_name":  email_to_name,
+            "my_bookings":    my_bookings,
+            "errors":         errors,
         }
 
 cache = st.session_state[cache_key]
-by_date_team = cache["by_date_team"]
-my_bookings  = cache["my_bookings"]
-errors       = cache["errors"]
+by_date_team   = cache["by_date_team"]
+by_date_person = cache["by_date_person"]
+email_to_name  = cache["email_to_name"]
+my_bookings    = cache["my_bookings"]
+errors         = cache["errors"]
 
 
 def invalidate_cache():
     """예약/취소 후 캐시 갱신"""
     if cache_key in st.session_state:
         del st.session_state[cache_key]
+
+
+# ─────────────────────────────────────────
+# 팀 현황 스트립 CSS + 렌더러
+# ─────────────────────────────────────────
+st.markdown(
+    """
+    <style>
+    .team-strip {
+        display: flex;
+        overflow-x: auto;
+        gap: 8px;
+        padding: 8px 2px 12px;
+        width: 100%;
+        scrollbar-width: thin;
+    }
+    .tm-card {
+        min-width: 160px;
+        max-width: 180px;
+        flex: 0 0 auto;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 8px 10px;
+        background: #ffffff;
+    }
+    .tm-name {
+        font-weight: 600;
+        font-size: 13px;
+        color: #111827;
+        line-height: 1.2;
+    }
+    .tm-team {
+        font-size: 10px;
+        color: #6b7280;
+        margin-bottom: 6px;
+    }
+    .tm-events { display: flex; flex-direction: column; gap: 3px; }
+    .tm-ev {
+        font-size: 11px;
+        padding: 3px 6px;
+        background: #f3f4f6;
+        border-radius: 4px;
+        color: #374151;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .tm-ev-ooo { background: #fee2e2; color: #991b1b; }
+    .tm-ev-loc { background: #dbeafe; color: #1e40af; }
+    .tm-ev-focus { background: #ede9fe; color: #5b21b6; }
+    .tm-free { font-size: 11px; color: #9ca3af; font-style: italic; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+_EV_CLASS_BY_TYPE = {
+    "outOfOffice":    "tm-ev tm-ev-ooo",
+    "workingLocation": "tm-ev tm-ev-loc",
+    "focusTime":       "tm-ev tm-ev-focus",
+}
+
+
+def render_team_strip(date_str: str) -> None:
+    day_map = by_date_person.get(date_str, {})
+    cards: list[str] = []
+    for email, team in TEAM_MAP.items():
+        name = email_to_name.get(email, email.split("@")[0])
+        evs = day_map.get(email, [])
+
+        event_html: list[str] = []
+        for ev in evs:
+            title = (ev.get("summary") or "(제목 없음)").strip()
+            cls = _EV_CLASS_BY_TYPE.get(ev.get("eventType", "default"), "tm-ev")
+            esc = html.escape(title)
+            event_html.append(f'<div class="{cls}" title="{esc}">{esc}</div>')
+        if not event_html:
+            event_html.append('<div class="tm-free">— 한가</div>')
+
+        cards.append(
+            f'<div class="tm-card">'
+            f'<div class="tm-name">{html.escape(name)}</div>'
+            f'<div class="tm-team">{html.escape(team)}</div>'
+            f'<div class="tm-events">{"".join(event_html)}</div>'
+            f'</div>'
+        )
+    st.markdown(
+        f'<div class="team-strip">{"".join(cards)}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 # ─────────────────────────────────────────
@@ -112,6 +211,9 @@ for weekday_idx, (tab, day_label) in enumerate(zip(tabs[:-1], WEEKDAY_TAB_LABELS
     date_str = date.strftime("%Y-%m-%d")
 
     with tab:
+        # 팀 현황 카드 스트립 (가로 스크롤)
+        render_team_strip(date_str)
+
         team_events_for_date = by_date_team.get(date_str, {})
 
         # 팀 간 중복 제거
