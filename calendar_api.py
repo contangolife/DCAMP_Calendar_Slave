@@ -126,14 +126,14 @@ def authenticate():
 # ─────────────────────────────────────────
 
 def get_week_range(week_offset: int = 0) -> tuple[datetime, datetime]:
-    """week_offset: 0=이번주, 1=다음주, -1=지난주"""
+    """week_offset: 0=이번주, 1=다음주, 2=다다음주. 평일(월~금) 범위만 반환."""
     today = datetime.now(TZ)
     monday = (today - timedelta(days=today.weekday())).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
     monday = monday + timedelta(weeks=week_offset)
-    sunday = monday + timedelta(days=6, hours=23, minutes=59, seconds=59)
-    return monday, sunday
+    friday_end = monday + timedelta(days=4, hours=23, minutes=59, seconds=59)
+    return monday, friday_end
 
 
 def parse_event_time(event: dict) -> tuple[datetime | None, datetime | None]:
