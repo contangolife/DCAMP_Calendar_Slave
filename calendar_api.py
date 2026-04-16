@@ -168,6 +168,21 @@ def is_valid_room_name(name: str) -> bool:
     return bool(ROOM_NAME_PATTERN.match(name))
 
 
+def extract_attendee_names(event: dict) -> list[str]:
+    """참석자 이름 목록 (회의실 리소스 제외, displayName 우선, 없으면 이메일 local-part)"""
+    names: list[str] = []
+    seen: set[str] = set()
+    for att in event.get("attendees", []):
+        email = att.get("email", "")
+        if not email or "@resource.calendar.google.com" in email:
+            continue
+        name = att.get("displayName") or email.split("@")[0]
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
 def get_booked_rooms(event: dict, room_resources: dict) -> list[str]:
     """이벤트에 이미 예약된 회의실 이름 목록"""
     rooms = []
@@ -259,6 +274,8 @@ def classify_events(events: list, room_resources: dict) -> dict:
             "end":   end,
             "rooms": get_booked_rooms(ev, room_resources),
             "organizer": ev.get("organizer", {}).get("email", ""),
+            "teams": sorted(teams, key=lambda t: TEAM_ORDER.index(t) if t in TEAM_ORDER else 99),
+            "attendees": extract_attendee_names(ev),
         }
         for team in teams:
             by_date_team[date_key][team].append(entry)
