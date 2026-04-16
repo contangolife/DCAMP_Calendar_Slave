@@ -1,0 +1,458 @@
+"""
+Google Calendar API 로직 (조회 / 예약 / 취소)
+
+핵심 설계:
+- 팀원 회의를 "읽기"만 함 (남의 캘린더 수정 불가)
+- 회의실 예약은 "내 캘린더에 미러 이벤트 생성 + 회의실만 초대"
+- 미러 이벤트는 extendedProperties.private에 원본 ID를 심어 중복/취소 관리
+"""
+import json
+import os
+import re
+from datetime import datetime, timedelta
+from collections import defaultdict
+
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from google.auth.exceptions import RefreshError
+from googleapiclient.discovery import build
+
+from config import (
+    SCOPES, CREDENTIALS_FILE, TOKEN_FILE, BOOKING_TAG,
+    TZ, WEEKDAY_KO, TEAM_MAP, TEAM_ORDER,
+)
+
+# ─────────────────────────────────────────
+# 인증 (로컬 파일 + Streamlit Secrets 둘 다 지원)
+# ─────────────────────────────────────────
+
+def _deep_to_dict(obj):
+    """Streamlit Secrets AttrDict를 일반 dict로 재귀 변환"""
+    if hasattr(obj, "to_dict"):
+        obj = obj.to_dict()
+    if isinstance(obj, dict):
+        return {k: _deep_to_dict(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_deep_to_dict(x) for x in obj]
+    return obj
+
+
+def _load_auth_data() -> tuple[dict | None, dict | None]:
+    """
+    credentials / token 정보를 로드.
+    우선순위: Streamlit Secrets > 로컬 파일
+    Returns: (credentials_info, token_info) or (None, None)
+    """
+    creds_info, token_info = None, None
+
+    # 1. Streamlit Secrets 시도
+    try:
+        import streamlit as st
+        if "google_credentials" in st.secrets:
+            creds_info = _deep_to_dict(st.secrets["google_credentials"])
+        if "google_token" in st.secrets:
+            token_info = _deep_to_dict(st.secrets["google_token"])
+    except Exception:
+        pass
+
+    # 2. 로컬 파일 fallback
+    if creds_info is None and CREDENTIALS_FILE.exists():
+        creds_info = json.loads(CREDENTIALS_FILE.read_text(encoding="utf-8"))
+    if token_info is None and TOKEN_FILE.exists():
+        token_info = json.loads(TOKEN_FILE.read_text(encoding="utf-8"))
+
+    return creds_info, token_info
+
+
+def _save_token_local(creds):
+    """가능하면 로컬에 토큰 저장. Streamlit Cloud에서는 조용히 실패."""
+    try:
+        TOKEN_FILE.write_text(creds.to_json(), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def authenticate():
+    """
+    로컬: credentials.json + token.json 파일
+    Cloud: Streamlit Secrets의 google_credentials, google_token
+    """
+    creds_info, token_info = _load_auth_data()
+    creds = None
+
+    # 1. 기존 토큰으로 시도
+    if token_info:
+        try:
+            creds = Credentials.from_authorized_user_info(token_info, SCOPES)
+        except Exception:
+            creds = None
+
+    # 2. 유효하면 바로 반환
+    if creds and creds.valid:
+        return build("calendar", "v3", credentials=creds)
+
+    # 3. 만료됐지만 refresh 가능하면 갱신
+    if creds and creds.expired and creds.refresh_token:
+        try:
+            creds.refresh(Request())
+            _save_token_local(creds)
+            return build("calendar", "v3", credentials=creds)
+        except RefreshError:
+            creds = None
+
+    # 4. 새로 인증 필요 (Desktop OAuth flow — 로컬 전용)
+    if not creds_info:
+        raise RuntimeError(
+            "credentials가 없습니다.\n"
+            "- 로컬: credentials.json을 프로젝트 폴더에 두세요.\n"
+            "- Cloud: Streamlit Secrets에 [google_credentials]를 등록하세요."
+        )
+    if "installed" not in creds_info:
+        raise RuntimeError(
+            "토큰이 만료되었거나 없습니다.\n"
+            "로컬 PC에서 한 번 authenticate()를 실행해 token.json을 재생성한 후,\n"
+            "그 내용을 Streamlit Secrets의 [google_token] 섹션에 업데이트하세요."
+        )
+
+    flow = InstalledAppFlow.from_client_config(creds_info, SCOPES)
+    creds = flow.run_local_server(port=0)
+    _save_token_local(creds)
+    return build("calendar", "v3", credentials=creds)
+
+
+# ─────────────────────────────────────────
+# 시간 유틸
+# ─────────────────────────────────────────
+
+def get_week_range(week_offset: int = 0) -> tuple[datetime, datetime]:
+    """week_offset: 0=이번주, 1=다음주, -1=지난주"""
+    today = datetime.now(TZ)
+    monday = (today - timedelta(days=today.weekday())).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    monday = monday + timedelta(weeks=week_offset)
+    sunday = monday + timedelta(days=6, hours=23, minutes=59, seconds=59)
+    return monday, sunday
+
+
+def parse_event_time(event: dict) -> tuple[datetime | None, datetime | None]:
+    s = event.get("start", {}).get("dateTime")
+    e = event.get("end", {}).get("dateTime")
+    if not s or not e:
+        return None, None
+    return (
+        datetime.fromisoformat(s).astimezone(TZ),
+        datetime.fromisoformat(e).astimezone(TZ),
+    )
+
+
+# ─────────────────────────────────────────
+# 회의실 이름 파싱
+# ─────────────────────────────────────────
+
+ROOM_NAME_PATTERN = re.compile(r"^(선릉|마포)\s*\d+[-][A-Za-z]$")
+
+def clean_room_name(raw: str) -> str:
+    """'Taap-선릉-4-4-B (6)' → '선릉 4-B'"""
+    m = re.search(r"Taap[-_]?(선릉|마포)[-_](\d+)[-_]\d+[-_]([A-Za-z])", raw, re.IGNORECASE)
+    if m:
+        return f"{m.group(1)} {m.group(2)}-{m.group(3).upper()}"
+    m2 = re.search(r"(선릉|마포)\s*(\d+[-][A-Za-z])", raw)
+    if m2:
+        return f"{m2.group(1)} {m2.group(2)}"
+    return raw.strip()
+
+
+def is_valid_room_name(name: str) -> bool:
+    return bool(ROOM_NAME_PATTERN.match(name))
+
+
+def get_booked_rooms(event: dict, room_resources: dict) -> list[str]:
+    """이벤트에 이미 예약된 회의실 이름 목록"""
+    rooms = []
+    for att in event.get("attendees", []):
+        email = att.get("email", "")
+        if "@resource.calendar.google.com" not in email:
+            continue
+        matched = next((name for name, rid in room_resources.items() if rid == email), None)
+        if matched:
+            rooms.append(matched)
+        else:
+            display = att.get("displayName", "")
+            if display:
+                rooms.append(clean_room_name(display))
+    # location fallback — 회의실 패턴만 허용 (주소/Teams 링크 배제)
+    if not rooms:
+        location = event.get("location", "")
+        if location:
+            cleaned = clean_room_name(location)
+            if is_valid_room_name(cleaned):
+                rooms.append(cleaned)
+    return rooms
+
+
+# ─────────────────────────────────────────
+# 조회
+# ─────────────────────────────────────────
+
+def fetch_team_events(service, week_offset: int = 0) -> tuple[list, list[str]]:
+    """팀원 전체의 이번 주 이벤트 조회 (중복 제거)"""
+    time_min, time_max = get_week_range(week_offset)
+    event_map: dict[str, dict] = {}
+    errors: list[str] = []
+
+    for email in TEAM_MAP.keys():
+        try:
+            page_token = None
+            while True:
+                result = service.events().list(
+                    calendarId=email,
+                    timeMin=time_min.isoformat(),
+                    timeMax=time_max.isoformat(),
+                    singleEvents=True,
+                    orderBy="startTime",
+                    maxResults=250,
+                    pageToken=page_token,
+                ).execute()
+                for ev in result.get("items", []):
+                    eid = ev.get("id", "")
+                    if eid not in event_map:
+                        event_map[eid] = ev
+                        event_map[eid]["_team_emails"] = set()
+                    event_map[eid]["_team_emails"].add(email)
+                page_token = result.get("nextPageToken")
+                if not page_token:
+                    break
+        except Exception as e:
+            errors.append(f"{email}: {e}")
+
+    return list(event_map.values()), errors
+
+
+def classify_events(events: list, room_resources: dict) -> dict:
+    """이벤트를 {날짜: {팀: [entries]}} 구조로 변환"""
+    by_date_team: dict = defaultdict(lambda: defaultdict(list))
+
+    for ev in events:
+        start, end = parse_event_time(ev)
+        if not start:
+            continue
+        if start.weekday() >= 5:
+            continue
+
+        # 점심시간(12:00~13:00) 포함 일정 제외
+        lunch_start = start.replace(hour=12, minute=0, second=0, microsecond=0)
+        lunch_end = start.replace(hour=13, minute=0, second=0, microsecond=0)
+        if start < lunch_end and end > lunch_start:
+            continue
+
+        teams = {TEAM_MAP[em] for em in ev.get("_team_emails", set()) if em in TEAM_MAP}
+        if not teams:
+            continue
+
+        date_key = start.strftime("%Y-%m-%d")
+        entry = {
+            "id":    ev.get("id", ""),
+            "title": ev.get("summary", "(제목 없음)").strip(),
+            "start": start,
+            "end":   end,
+            "rooms": get_booked_rooms(ev, room_resources),
+            "organizer": ev.get("organizer", {}).get("email", ""),
+        }
+        for team in teams:
+            by_date_team[date_key][team].append(entry)
+
+    return by_date_team
+
+
+# ─────────────────────────────────────────
+# 내 미러 예약 조회/관리
+# ─────────────────────────────────────────
+
+def fetch_my_bookings(service, week_offset: int = 0) -> dict[str, dict]:
+    """
+    내 캘린더에서 이 스크립트가 만든 예약 이벤트 전체 조회.
+    Returns: {원본_이벤트_id: 미러_이벤트}
+    """
+    time_min, time_max = get_week_range(week_offset)
+    bookings: dict[str, dict] = {}
+    page_token = None
+    while True:
+        result = service.events().list(
+            calendarId="primary",
+            timeMin=time_min.isoformat(),
+            timeMax=time_max.isoformat(),
+            singleEvents=True,
+            privateExtendedProperty=f"booked_by_script={BOOKING_TAG}",
+            pageToken=page_token,
+        ).execute()
+        for ev in result.get("items", []):
+            props = ev.get("extendedProperties", {}).get("private", {})
+            original_id = props.get("original_event_id")
+            if original_id:
+                bookings[original_id] = ev
+        page_token = result.get("nextPageToken")
+        if not page_token:
+            break
+    return bookings
+
+
+def is_room_available(service, room_cal_id: str, start: datetime, end: datetime) -> bool:
+    """회의실 캘린더를 직접 읽어 시간 겹침 확인"""
+    try:
+        result = service.events().list(
+            calendarId=room_cal_id,
+            timeMin=start.isoformat(),
+            timeMax=end.isoformat(),
+            singleEvents=True,
+        ).execute()
+        for ev in result.get("items", []):
+            s = ev.get("start", {}).get("dateTime")
+            e = ev.get("end", {}).get("dateTime")
+            if not s or not e:
+                continue
+            ev_start = datetime.fromisoformat(s).astimezone(TZ)
+            ev_end = datetime.fromisoformat(e).astimezone(TZ)
+            if ev_start < end and ev_end > start:
+                return False
+        return True
+    except Exception:
+        # 권한 없으면 확인 스킵 (insert 시점에 Google이 거부함)
+        return True
+
+
+# ─────────────────────────────────────────
+# 예약 / 취소
+# ─────────────────────────────────────────
+
+def book_meeting(
+    service,
+    entry: dict,
+    room_resource_email: str,
+    room_name: str,
+) -> dict:
+    """
+    내 캘린더에 미러 이벤트 생성 + 회의실만 초대
+    Returns: {"status": "ok"|"duplicate"|"conflict"|"error", "event_id": ..., "message": ...}
+    """
+    # 1. 중복 체크
+    existing = fetch_my_bookings(service, _week_offset_for_date(entry["start"]))
+    if entry["id"] in existing:
+        return {
+            "status": "duplicate",
+            "event_id": existing[entry["id"]]["id"],
+            "message": "이미 예약된 건입니다. 먼저 취소 후 다시 예약해주세요.",
+        }
+
+    # 2. 회의실 가용성 체크
+    if not is_room_available(service, room_resource_email, entry["start"], entry["end"]):
+        return {
+            "status": "conflict",
+            "event_id": None,
+            "message": f"{room_name}이(가) 해당 시간에 이미 예약되어 있습니다.",
+        }
+
+    # 3. 미러 이벤트 생성
+    body = {
+        "summary": f"[예약] {entry['title']}",
+        "start":   {"dateTime": entry["start"].isoformat(), "timeZone": "Asia/Seoul"},
+        "end":     {"dateTime": entry["end"].isoformat(),   "timeZone": "Asia/Seoul"},
+        "attendees": [{"email": room_resource_email, "displayName": room_name}],
+        "visibility": "private",
+        "reminders": {"useDefault": False},
+        "description": f"원본 이벤트 대리 예약\n원본 ID: {entry['id']}\n원본 주최자: {entry.get('organizer', '')}",
+        "extendedProperties": {
+            "private": {
+                "original_event_id":  entry["id"],
+                "original_title":     entry["title"],
+                "room_name":          room_name,
+                "booked_by_script":   BOOKING_TAG,
+            }
+        },
+    }
+    try:
+        created = service.events().insert(
+            calendarId="primary",
+            body=body,
+            sendUpdates="none",
+        ).execute()
+        return {
+            "status": "ok",
+            "event_id": created["id"],
+            "message": f"{room_name} 예약 완료",
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "event_id": None,
+            "message": f"예약 실패: {e}",
+        }
+
+
+def cancel_booking(service, original_event_id: str, week_offset: int = 0) -> dict:
+    """미러 예약 이벤트 삭제"""
+    bookings = fetch_my_bookings(service, week_offset)
+    if original_event_id not in bookings:
+        return {"status": "not_found", "message": "해당 예약을 찾을 수 없습니다."}
+    mirror_event_id = bookings[original_event_id]["id"]
+    try:
+        service.events().delete(
+            calendarId="primary",
+            eventId=mirror_event_id,
+            sendUpdates="none",
+        ).execute()
+        return {"status": "ok", "message": "예약 취소 완료"}
+    except Exception as e:
+        return {"status": "error", "message": f"취소 실패: {e}"}
+
+
+def _week_offset_for_date(dt: datetime) -> int:
+    """datetime이 어느 주의 offset에 해당하는지 계산"""
+    today = datetime.now(TZ)
+    this_monday = (today - timedelta(days=today.weekday())).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    target_monday = (dt - timedelta(days=dt.weekday())).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return (target_monday - this_monday).days // 7
+
+
+# ─────────────────────────────────────────
+# SMS 생성
+# ─────────────────────────────────────────
+
+def build_sms(date_str: str, team_events: dict, my_bookings: dict) -> str:
+    """
+    team_events: {팀: [entries]}
+    my_bookings: {원본_id: 미러_이벤트} — 미러 예약 반영용
+    """
+    date = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=TZ)
+    weekday = WEEKDAY_KO[date.weekday()]
+    lines = [f"💡 {date.month}/{date.day} {weekday}요일, 회의실 안내드립니다!"]
+
+    for team in TEAM_ORDER:
+        evs = team_events.get(team)
+        if not evs:
+            continue
+
+        seen: set = set()
+        unique_evs = [e for e in evs if not (e["id"] in seen or seen.add(e["id"]))]
+        unique_evs.sort(key=lambda x: x["start"])
+
+        lines.append(f"□ {team}")
+        for ev in unique_evs:
+            rooms = list(ev["rooms"])
+            # 미러 예약 있으면 추가
+            if ev["id"] in my_bookings:
+                mirror = my_bookings[ev["id"]]
+                room_name = mirror.get("extendedProperties", {}).get("private", {}).get("room_name")
+                if room_name and room_name not in rooms:
+                    rooms.append(room_name)
+            room_str = " / ".join(rooms) if rooms else "미배정"
+            t = f"{ev['start'].strftime('%H:%M')}~{ev['end'].strftime('%H:%M')}"
+            lines.append(f"[{room_str}] {t} {ev['title']}")
+
+    lines.append("추가 일정이나 변경 사항 있으시면 반영하겠습니다. 감사합니다.")
+    return "\n".join(lines)
