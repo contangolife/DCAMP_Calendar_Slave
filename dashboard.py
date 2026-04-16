@@ -65,7 +65,8 @@ st.caption(
 # ─────────────────────────────────────────
 # 캐시 관리
 # ─────────────────────────────────────────
-cache_key = f"cache_{week_offset}"
+resources_version = hash(tuple(ROOM_RESOURCES.items()))
+cache_key = f"cache_{week_offset}_{resources_version}"
 if refresh and cache_key in st.session_state:
     del st.session_state[cache_key]
 
@@ -180,7 +181,7 @@ for tab, team in zip(tabs[:-1], TEAM_ORDER):
                 else:
                     room_choice = row[3].selectbox(
                         "회의실",
-                        ["선택..."] + list(ROOM_RESOURCES.keys()),
+                        ["선택..."] + sorted(ROOM_RESOURCES.keys()),
                         key=f"sel_{key_base}",
                         label_visibility="collapsed",
                     )
