@@ -152,12 +152,19 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# 일반 회의는 제외 — 근무지/휴가/집중시간 같은 "상태" 이벤트만 표시
+# 근무지/휴가/집중시간 같은 "상태" 이벤트 + "종일" 이벤트만 스트립에 표시.
+# 종일 기준을 넣는 이유: 사람들이 workingLocation 대신 종일 일정으로 "선릉" "재택" 같이
+# 직접 적어놓는 경우가 많아서.
 _STATUS_EV_CLASS = {
     "workingLocation": "tm-ev tm-ev-loc",
     "outOfOffice":     "tm-ev tm-ev-ooo",
     "focusTime":       "tm-ev tm-ev-focus",
 }
+
+
+def _is_all_day(event: dict) -> bool:
+    start = event.get("start", {}) or {}
+    return "date" in start and "dateTime" not in start
 
 
 def render_team_strip(date_str: str) -> None:
@@ -170,9 +177,10 @@ def render_team_strip(date_str: str) -> None:
         event_html: list[str] = []
         for ev in evs:
             etype = ev.get("eventType", "default")
-            cls = _STATUS_EV_CLASS.get(etype)
-            if not cls:
-                continue  # 상태 이벤트가 아니면 스킵
+            is_status_type = etype in _STATUS_EV_CLASS
+            if not (is_status_type or _is_all_day(ev)):
+                continue
+            cls = _STATUS_EV_CLASS.get(etype, "tm-ev")
             title = (ev.get("summary") or "").strip() or etype
             esc = html.escape(title)
             event_html.append(f'<div class="{cls}" title="{esc}">{esc}</div>')
