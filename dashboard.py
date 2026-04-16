@@ -131,7 +131,60 @@ with tabs[0]:
 
             date = datetime.strptime(date_str, "%Y-%m-%d")
             weekday = WEEKDAY_KO[date.weekday()]
-            st.subheader(f"{date.month}/{date.day} ({weekday})")
+
+            # 미배정 이벤트와 해당 selectbox 키 준비
+            unassigned: list[tuple[int, dict, str]] = []
+            for idx, ev in enumerate(all_evs):
+                if ev["rooms"]:
+                    continue
+                if ev["id"] in my_bookings:
+                    continue
+                sel_key = f"sel_all_{date_str}_{idx}_{ev['id']}"
+                unassigned.append((idx, ev, sel_key))
+
+            # 현재 드롭다운에서 실제 선택된 개수
+            selected_count = sum(
+                1 for _, _, k in unassigned
+                if st.session_state.get(k, "선택...") != "선택..."
+            )
+
+            # 요일 헤더 + 일괄 예약 버튼
+            head_cols = st.columns([5, 2])
+            head_cols[0].subheader(f"{date.month}/{date.day} ({weekday})")
+
+            batch_clicked = False
+            if unassigned:
+                btn_label = (
+                    f"🚀 일괄 예약 ({selected_count}/{len(unassigned)})"
+                )
+                batch_clicked = head_cols[1].button(
+                    btn_label,
+                    key=f"batch_{date_str}",
+                    type="primary",
+                    disabled=(selected_count == 0),
+                    use_container_width=True,
+                )
+
+            # 이전 배치 결과 표시 (있으면)
+            result_key = f"batch_result_{date_str}"
+            if result_key in st.session_state:
+                results = st.session_state[result_key]
+                ok = [r for r in results if r["status"] == "ok"]
+                dup = [r for r in results if r["status"] == "duplicate"]
+                fails = [r for r in results if r["status"] not in ("ok", "duplicate")]
+                with st.expander(
+                    f"📋 일괄 예약 결과 — ✅ {len(ok)} / ⚠ {len(dup)} / ❌ {len(fails)}",
+                    expanded=bool(fails),
+                ):
+                    for r in ok:
+                        st.success(f"✅ {r['room']} · {r['title']}")
+                    for r in dup:
+                        st.warning(f"⚠ {r['room']} · {r['title']} — {r['message']}")
+                    for r in fails:
+                        st.error(f"❌ {r.get('room', '-')} · {r['title']} — {r['message']}")
+                    if st.button("결과 닫기", key=f"close_{result_key}"):
+                        del st.session_state[result_key]
+                        st.rerun()
 
             header = st.columns(COL_WIDTHS)
             header[0].caption("**팀**")
@@ -186,29 +239,48 @@ with tabs[0]:
                         invalidate_cache()
                         st.rerun()
                 else:
-                    room_choice = row[6].selectbox(
+                    row[6].selectbox(
                         "회의실",
                         ["선택..."] + sorted(ROOM_RESOURCES.keys()),
                         key=f"sel_{key_base}",
                         label_visibility="collapsed",
                     )
-                    if row[7].button("예약", key=f"book_{key_base}", type="primary"):
-                        if room_choice == "선택...":
-                            st.warning("회의실을 먼저 선택해주세요.")
-                        else:
-                            with st.spinner("예약 중..."):
-                                result = book_meeting(
-                                    service,
-                                    ev,
-                                    ROOM_RESOURCES[room_choice],
-                                    room_choice,
-                                )
-                            if result["status"] == "ok":
-                                st.success(result["message"])
-                                invalidate_cache()
-                                st.rerun()
-                            else:
-                                st.error(result["message"])
+                    row[7].write("—")
+
+            # 일괄 예약 처리
+            if batch_clicked:
+                pairs = []
+                for _, ev, k in unassigned:
+                    room_choice = st.session_state.get(k, "선택...")
+                    if room_choice == "선택...":
+                        continue
+                    pairs.append((ev, room_choice))
+
+                batch_results: list[dict] = []
+                progress = st.progress(0.0, text=f"{len(pairs)}건 예약 시작...")
+                for i, (ev, room_choice) in enumerate(pairs):
+                    progress.progress(
+                        i / len(pairs),
+                        text=f"[{i+1}/{len(pairs)}] {room_choice} · {ev['title']}",
+                    )
+                    result = book_meeting(
+                        service,
+                        ev,
+                        ROOM_RESOURCES[room_choice],
+                        room_choice,
+                    )
+                    batch_results.append({
+                        "title":   ev["title"],
+                        "room":    room_choice,
+                        "status":  result["status"],
+                        "message": result["message"],
+                    })
+                progress.progress(1.0, text=f"완료: {len(pairs)}건 처리됨")
+                progress.empty()
+
+                st.session_state[result_key] = batch_results
+                invalidate_cache()
+                st.rerun()
 
             st.divider()
 
