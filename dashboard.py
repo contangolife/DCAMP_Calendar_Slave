@@ -237,13 +237,23 @@ with tabs[0]:
                     if row[7].button("취소", key=f"cancel_{key_base}", type="secondary"):
                         with st.spinner("취소 중..."):
                             result = cancel_booking(service, ev["id"], week_offset)
-                        if result["status"] in ("ok",):
+                        if result["status"] == "ok":
                             st.success(result["message"])
                         elif result["status"] == "partial":
                             st.warning(result["message"])
                         else:
                             st.error(result["message"])
-                        invalidate_cache()
+                        # 캐시 패치 — 재조회 없이 삭제된 미러만 제거
+                        deleted = set(result.get("deleted_mirror_ids", []))
+                        if deleted:
+                            remaining = [
+                                m for m in my_bookings.get(ev["id"], [])
+                                if m["id"] not in deleted
+                            ]
+                            if remaining:
+                                my_bookings[ev["id"]] = remaining
+                            else:
+                                my_bookings.pop(ev["id"], None)
                         st.rerun()
                 else:
                     row[6].multiselect(
@@ -282,11 +292,14 @@ with tabs[0]:
                         "status":  result["status"],
                         "message": result["message"],
                     })
+                    # 캐시 패치 — 성공 건은 생성된 미러를 my_bookings에 바로 추가
+                    if result["status"] == "ok" and result.get("event"):
+                        my_bookings.setdefault(ev["id"], []).append(result["event"])
                 progress.progress(1.0, text=f"완료: {len(pairs)}건 처리됨")
                 progress.empty()
 
                 st.session_state[result_key] = batch_results
-                invalidate_cache()
+                # invalidate_cache() 하지 않음 — 캐시는 위에서 in-place로 패치됨
                 st.rerun()
 
             st.divider()
@@ -310,11 +323,13 @@ with tabs[-1]:
                 continue
             date = datetime.strptime(date_str, "%Y-%m-%d")
             weekday = WEEKDAY_KO[date.weekday()]
+            # key에 내용 해시를 포함 — session_state가 value를 덮어쓰지 않도록
+            # (Streamlit은 같은 key면 session_state[key]를 우선해서 옛 SMS가 고정되는 이슈가 있음)
             st.text_area(
                 f"{date.month}/{date.day} ({weekday})",
                 sms,
                 height=300,
-                key=f"sms_{date_str}",
+                key=f"sms_{date_str}_{hash(sms)}",
             )
             rendered += 1
         if rendered == 0:

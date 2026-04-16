@@ -418,6 +418,8 @@ def book_meeting(
         return {
             "status": "ok",
             "event_id": created["id"],
+            "event": created,
+            "original_id": entry["id"],
             "message": f"{room_name} 예약 완료",
         }
     except Exception as e:
@@ -437,6 +439,7 @@ def cancel_booking(service, original_event_id: str, week_offset: int = 0) -> dic
 
     succeeded = 0
     errors: list[str] = []
+    deleted_mirror_ids: list[str] = []
     for mirror in mirrors:
         room = (
             mirror.get("extendedProperties", {})
@@ -450,17 +453,27 @@ def cancel_booking(service, original_event_id: str, week_offset: int = 0) -> dic
                 sendUpdates="none",
             ).execute()
             succeeded += 1
+            deleted_mirror_ids.append(mirror["id"])
         except Exception as e:
             errors.append(f"{room}: {e}")
 
     if errors and succeeded == 0:
-        return {"status": "error", "message": f"취소 실패: {'; '.join(errors)}"}
+        return {
+            "status": "error",
+            "message": f"취소 실패: {'; '.join(errors)}",
+            "deleted_mirror_ids": deleted_mirror_ids,
+        }
     if errors:
         return {
             "status": "partial",
             "message": f"{succeeded}건 취소, 실패: {'; '.join(errors)}",
+            "deleted_mirror_ids": deleted_mirror_ids,
         }
-    return {"status": "ok", "message": f"{succeeded}건 취소 완료"}
+    return {
+        "status": "ok",
+        "message": f"{succeeded}건 취소 완료",
+        "deleted_mirror_ids": deleted_mirror_ids,
+    }
 
 
 def _week_offset_for_date(dt: datetime) -> int:
