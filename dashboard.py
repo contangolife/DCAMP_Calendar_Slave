@@ -152,9 +152,10 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-_EV_CLASS_BY_TYPE = {
-    "outOfOffice":    "tm-ev tm-ev-ooo",
+# 일반 회의는 제외 — 근무지/휴가/집중시간 같은 "상태" 이벤트만 표시
+_STATUS_EV_CLASS = {
     "workingLocation": "tm-ev tm-ev-loc",
+    "outOfOffice":     "tm-ev tm-ev-ooo",
     "focusTime":       "tm-ev tm-ev-focus",
 }
 
@@ -168,12 +169,15 @@ def render_team_strip(date_str: str) -> None:
 
         event_html: list[str] = []
         for ev in evs:
-            title = (ev.get("summary") or "(제목 없음)").strip()
-            cls = _EV_CLASS_BY_TYPE.get(ev.get("eventType", "default"), "tm-ev")
+            etype = ev.get("eventType", "default")
+            cls = _STATUS_EV_CLASS.get(etype)
+            if not cls:
+                continue  # 상태 이벤트가 아니면 스킵
+            title = (ev.get("summary") or "").strip() or etype
             esc = html.escape(title)
             event_html.append(f'<div class="{cls}" title="{esc}">{esc}</div>')
         if not event_html:
-            event_html.append('<div class="tm-free">— 한가</div>')
+            event_html.append('<div class="tm-free">—</div>')
 
         cards.append(
             f'<div class="tm-card">'
