@@ -300,13 +300,15 @@ def classify_events(events: list, room_resources: dict) -> dict:
 # 내 미러 예약 조회/관리
 # ─────────────────────────────────────────
 
-def fetch_my_bookings(service, week_offset: int = 0) -> dict[str, dict]:
+def fetch_my_bookings(service, week_offset: int = 0) -> dict[str, list[dict]]:
     """
     내 캘린더에서 이 스크립트가 만든 예약 이벤트 전체 조회.
-    Returns: {원본_이벤트_id: 미러_이벤트}
+    같은 원본 일정에 여러 회의실(마포/선릉 동시 등)을 잡으면 미러가 여러 개 생기므로
+    원본 id 하나에 미러 리스트로 반환.
+    Returns: {원본_이벤트_id: [미러_이벤트, ...]}
     """
     time_min, time_max = get_week_range(week_offset)
-    bookings: dict[str, dict] = {}
+    bookings: dict[str, list[dict]] = defaultdict(list)
     page_token = None
     while True:
         result = service.events().list(
@@ -321,11 +323,11 @@ def fetch_my_bookings(service, week_offset: int = 0) -> dict[str, dict]:
             props = ev.get("extendedProperties", {}).get("private", {})
             original_id = props.get("original_event_id")
             if original_id:
-                bookings[original_id] = ev
+                bookings[original_id].append(ev)
         page_token = result.get("nextPageToken")
         if not page_token:
             break
-    return bookings
+    return dict(bookings)
 
 
 def is_room_available(service, room_cal_id: str, start: datetime, end: datetime) -> bool:
@@ -366,14 +368,20 @@ def book_meeting(
     내 캘린더에 미러 이벤트 생성 + 회의실만 초대
     Returns: {"status": "ok"|"duplicate"|"conflict"|"error", "event_id": ..., "message": ...}
     """
-    # 1. 중복 체크
+    # 1. 중복 체크 — 같은 회의실로 이미 예약됐는지 (다른 회의실 병행은 허용)
     existing = fetch_my_bookings(service, _week_offset_for_date(entry["start"]))
-    if entry["id"] in existing:
-        return {
-            "status": "duplicate",
-            "event_id": existing[entry["id"]]["id"],
-            "message": "이미 예약된 건입니다. 먼저 취소 후 다시 예약해주세요.",
-        }
+    for mirror in existing.get(entry["id"], []):
+        m_room = (
+            mirror.get("extendedProperties", {})
+            .get("private", {})
+            .get("room_name")
+        )
+        if m_room == room_name:
+            return {
+                "status": "duplicate",
+                "event_id": mirror["id"],
+                "message": f"{room_name}은(는) 이미 예약되어 있습니다.",
+            }
 
     # 2. 회의실 가용성 체크
     if not is_room_available(service, room_resource_email, entry["start"], entry["end"]):
@@ -421,20 +429,38 @@ def book_meeting(
 
 
 def cancel_booking(service, original_event_id: str, week_offset: int = 0) -> dict:
-    """미러 예약 이벤트 삭제"""
+    """원본 id에 연결된 모든 미러 예약 이벤트 삭제 (마포/선릉 동시 잡은 경우 함께 취소)"""
     bookings = fetch_my_bookings(service, week_offset)
-    if original_event_id not in bookings:
+    mirrors = bookings.get(original_event_id, [])
+    if not mirrors:
         return {"status": "not_found", "message": "해당 예약을 찾을 수 없습니다."}
-    mirror_event_id = bookings[original_event_id]["id"]
-    try:
-        service.events().delete(
-            calendarId="primary",
-            eventId=mirror_event_id,
-            sendUpdates="none",
-        ).execute()
-        return {"status": "ok", "message": "예약 취소 완료"}
-    except Exception as e:
-        return {"status": "error", "message": f"취소 실패: {e}"}
+
+    succeeded = 0
+    errors: list[str] = []
+    for mirror in mirrors:
+        room = (
+            mirror.get("extendedProperties", {})
+            .get("private", {})
+            .get("room_name", "?")
+        )
+        try:
+            service.events().delete(
+                calendarId="primary",
+                eventId=mirror["id"],
+                sendUpdates="none",
+            ).execute()
+            succeeded += 1
+        except Exception as e:
+            errors.append(f"{room}: {e}")
+
+    if errors and succeeded == 0:
+        return {"status": "error", "message": f"취소 실패: {'; '.join(errors)}"}
+    if errors:
+        return {
+            "status": "partial",
+            "message": f"{succeeded}건 취소, 실패: {'; '.join(errors)}",
+        }
+    return {"status": "ok", "message": f"{succeeded}건 취소 완료"}
 
 
 def _week_offset_for_date(dt: datetime) -> int:
@@ -476,9 +502,12 @@ def build_sms(date_str: str, team_events: dict, my_bookings: dict) -> str:
         team_lines: list[str] = []
         for ev in unique_evs:
             rooms = list(ev["rooms"])
-            if ev["id"] in my_bookings:
-                mirror = my_bookings[ev["id"]]
-                room_name = mirror.get("extendedProperties", {}).get("private", {}).get("room_name")
+            for mirror in my_bookings.get(ev["id"], []):
+                room_name = (
+                    mirror.get("extendedProperties", {})
+                    .get("private", {})
+                    .get("room_name")
+                )
                 if room_name and room_name not in rooms:
                     rooms.append(room_name)
             if not rooms:

@@ -132,7 +132,7 @@ with tabs[0]:
             date = datetime.strptime(date_str, "%Y-%m-%d")
             weekday = WEEKDAY_KO[date.weekday()]
 
-            # 미배정 이벤트와 해당 selectbox 키 준비
+            # 미배정 이벤트와 해당 multiselect 키 준비
             unassigned: list[tuple[int, dict, str]] = []
             for idx, ev in enumerate(all_evs):
                 if ev["rooms"]:
@@ -142,10 +142,13 @@ with tabs[0]:
                 sel_key = f"sel_all_{date_str}_{idx}_{ev['id']}"
                 unassigned.append((idx, ev, sel_key))
 
-            # 현재 드롭다운에서 실제 선택된 개수
-            selected_count = sum(
+            # 현재 multiselect에서 실제 선택된 회의실 총 개수
+            selected_rooms_count = sum(
+                len(st.session_state.get(k, [])) for _, _, k in unassigned
+            )
+            selected_evs_count = sum(
                 1 for _, _, k in unassigned
-                if st.session_state.get(k, "선택...") != "선택..."
+                if len(st.session_state.get(k, [])) > 0
             )
 
             # 요일 헤더 + 일괄 예약 버튼
@@ -155,13 +158,14 @@ with tabs[0]:
             batch_clicked = False
             if unassigned:
                 btn_label = (
-                    f"🚀 일괄 예약 ({selected_count}/{len(unassigned)})"
+                    f"🚀 일괄 예약 "
+                    f"({selected_evs_count}/{len(unassigned)}건 · 회의실 {selected_rooms_count}개)"
                 )
                 batch_clicked = head_cols[1].button(
                     btn_label,
                     key=f"batch_{date_str}",
                     type="primary",
-                    disabled=(selected_count == 0),
+                    disabled=(selected_rooms_count == 0),
                     use_container_width=True,
                 )
 
@@ -208,17 +212,18 @@ with tabs[0]:
                 row[4].write(", ".join(attendees) if attendees else "—")
 
                 has_original_room = bool(ev["rooms"])
-                my_booking = my_bookings.get(ev["id"])
+                my_mirror_list = my_bookings.get(ev["id"], [])
+                my_rooms = [
+                    m.get("extendedProperties", {})
+                    .get("private", {})
+                    .get("room_name", "?")
+                    for m in my_mirror_list
+                ]
 
                 if has_original_room:
                     row[5].markdown(f"🏢 `{' / '.join(ev['rooms'])}` _(원본)_")
-                elif my_booking:
-                    room_name = (
-                        my_booking.get("extendedProperties", {})
-                        .get("private", {})
-                        .get("room_name", "?")
-                    )
-                    row[5].markdown(f"✅ `{room_name}` _(내 예약)_")
+                elif my_rooms:
+                    row[5].markdown(f"✅ `{' / '.join(my_rooms)}` _(내 예약)_")
                 else:
                     row[5].markdown("🔴 **미배정**")
 
@@ -227,34 +232,36 @@ with tabs[0]:
                 if has_original_room:
                     row[6].write("—")
                     row[7].write("—")
-                elif my_booking:
+                elif my_rooms:
                     row[6].write("—")
                     if row[7].button("취소", key=f"cancel_{key_base}", type="secondary"):
                         with st.spinner("취소 중..."):
                             result = cancel_booking(service, ev["id"], week_offset)
-                        if result["status"] == "ok":
+                        if result["status"] in ("ok",):
                             st.success(result["message"])
+                        elif result["status"] == "partial":
+                            st.warning(result["message"])
                         else:
                             st.error(result["message"])
                         invalidate_cache()
                         st.rerun()
                 else:
-                    row[6].selectbox(
+                    row[6].multiselect(
                         "회의실",
-                        ["선택..."] + sorted(ROOM_RESOURCES.keys()),
+                        sorted(ROOM_RESOURCES.keys()),
                         key=f"sel_{key_base}",
                         label_visibility="collapsed",
+                        placeholder="회의실 선택 (여러 개 가능)",
                     )
                     row[7].write("—")
 
-            # 일괄 예약 처리
+            # 일괄 예약 처리 — 하나의 이벤트에 여러 회의실 선택 시 회의실 개수만큼 book_meeting 호출
             if batch_clicked:
                 pairs = []
                 for _, ev, k in unassigned:
-                    room_choice = st.session_state.get(k, "선택...")
-                    if room_choice == "선택...":
-                        continue
-                    pairs.append((ev, room_choice))
+                    rooms_selected = st.session_state.get(k, [])
+                    for room_choice in rooms_selected:
+                        pairs.append((ev, room_choice))
 
                 batch_results: list[dict] = []
                 progress = st.progress(0.0, text=f"{len(pairs)}건 예약 시작...")
