@@ -44,11 +44,11 @@ service = st.session_state.service
 # ─────────────────────────────────────────
 week_label = st.radio(
     "주차 선택",
-    ["지난주", "이번주", "다음주"],
+    ["이번주", "다음주", "다다음주"],
     horizontal=True,
-    index=1,
+    index=0,
 )
-week_offset = {"지난주": -1, "이번주": 0, "다음주": 1}[week_label]
+week_offset = {"이번주": 0, "다음주": 1, "다다음주": 2}[week_label]
 
 time_min, time_max = get_week_range(week_offset)
 
