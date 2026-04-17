@@ -66,7 +66,13 @@ if has_oauth_config():
     if "user_creds" not in st.session_state:
         st.markdown("### Google 계정으로 로그인")
         auth_url = get_auth_url(REDIRECT_URI)
-        st.link_button("Google 계정으로 로그인", auth_url, type="primary")
+        st.markdown(
+            f'<a href="{auth_url}" target="_self" style="display:inline-block;'
+            f"padding:0.6rem 1.2rem;background-color:#ff4b4b;color:white;"
+            f'border-radius:0.5rem;text-decoration:none;font-weight:600;">'
+            f"Google 계정으로 로그인</a>",
+            unsafe_allow_html=True,
+        )
         st.caption("@dcamp.kr 계정으로 로그인하면 회의실 예약이 가능합니다.")
         st.stop()
 
