@@ -63,19 +63,20 @@ if has_oauth_config():
                 st.query_params.clear()
 
     # 2) 로그인 안 됐으면 로그인 화면
-    if "user_creds" not in st.session_state:
-        import streamlit.components.v1 as components
-        st.markdown("### Google 계정으로 로그인")
-        auth_url = get_auth_url(REDIRECT_URI)
-        components.html(
-            f'<a href="{auth_url}" target="_top" style="'
-            f"display:inline-block;padding:0.6rem 1.2rem;"
-            f"background-color:#ff4b4b;color:white;border-radius:0.5rem;"
-            f"text-decoration:none;font-weight:600;font-size:1rem;"
-            f'font-family:sans-serif;cursor:pointer;">'
-            f"Google 계정으로 로그인</a>",
-            height=50,
+    if "_auth_redirect" in st.session_state:
+        url = st.session_state.pop("_auth_redirect")
+        st.markdown(
+            f'<meta http-equiv="refresh" content="0;url={url}">',
+            unsafe_allow_html=True,
         )
+        st.info("Google 로그인 페이지로 이동 중...")
+        st.stop()
+
+    if "user_creds" not in st.session_state:
+        st.markdown("### Google 계정으로 로그인")
+        if st.button("Google 계정으로 로그인", type="primary"):
+            st.session_state._auth_redirect = get_auth_url(REDIRECT_URI)
+            st.rerun()
         st.caption("@dcamp.kr 계정으로 로그인하면 회의실 예약이 가능합니다.")
         st.stop()
 
