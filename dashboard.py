@@ -226,7 +226,7 @@ st.markdown(
         border-radius: 8px;
         font-size: 12px;
         line-height: 1.5;
-        white-space: pre-line;
+        white-space: normal;
         min-width: 260px;
         max-width: 400px;
         z-index: 9999;
@@ -409,25 +409,20 @@ for weekday_idx, (tab, day_label) in enumerate(zip(tabs[:-1], WEEKDAY_TAB_LABELS
             row[0].write(" / ".join(ev.get("teams", [])) or "—")
             row[1].write(ev.get("organizer_name") or "—")
             # 제목 + 장소/설명 커스텀 툴팁 (hover + 모바일 tap)
-            tip_lines: list[str] = []
+            tip_html_parts: list[str] = []
             if ev.get("location"):
-                loc = html.escape(ev["location"])
-                tip_lines.append(f'<span class="ev-tip-label">장소</span> {loc}')
+                loc = html.escape(ev["location"]).replace("\n", " ")
+                tip_html_parts.append(f'<span class="ev-tip-label">장소</span> {loc}')
             if ev.get("description"):
                 desc = ev["description"].strip()
                 if len(desc) > 200:
                     desc = desc[:200] + "..."
-                tip_lines.append(
-                    f'<span class="ev-tip-label">설명</span> {html.escape(desc)}'
-                )
-            if tip_lines:
+                desc_esc = html.escape(desc).replace("\n", "<br>")
+                tip_html_parts.append(f'<span class="ev-tip-label">설명</span> {desc_esc}')
+            if tip_html_parts:
                 title_esc = html.escape(ev["title"])
-                tip_body = "\n".join(tip_lines)
-                row[2].markdown(
-                    f'<span class="ev-tip" tabindex="0">{title_esc}'
-                    f'<span class="ev-tip-body">{tip_body}</span></span>',
-                    unsafe_allow_html=True,
-                )
+                tip_body = "<br>".join(tip_html_parts)
+                row[2].markdown(f'<span class="ev-tip" tabindex="0">{title_esc}<span class="ev-tip-body">{tip_body}</span></span>', unsafe_allow_html=True)
             else:
                 row[2].write(ev["title"])
             row[3].write(f"{ev['start'].strftime('%H:%M')}~{ev['end'].strftime('%H:%M')}")
