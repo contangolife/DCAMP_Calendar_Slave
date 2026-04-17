@@ -432,6 +432,9 @@ def classify_events(events: list, room_resources: dict) -> dict:
             organizer_email.split("@")[0] if organizer_email else ""
         )
 
+        raw_desc = ev.get("description", "") or ""
+        clean_desc = re.sub(r"<[^>]+>", "", raw_desc).strip()
+
         entry = {
             "id":    ev.get("id", ""),
             "title": ev.get("summary", "(제목 없음)").strip(),
@@ -442,6 +445,8 @@ def classify_events(events: list, room_resources: dict) -> dict:
             "organizer_name": organizer_name,
             "teams": sorted(teams, key=lambda t: TEAM_ORDER.index(t) if t in TEAM_ORDER else 99),
             "attendees": extract_attendee_names(ev),
+            "location": (ev.get("location") or "").strip(),
+            "description": clean_desc,
         }
         for team in teams:
             by_date_team[date_key][team].append(entry)

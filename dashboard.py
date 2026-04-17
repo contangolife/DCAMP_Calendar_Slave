@@ -374,7 +374,21 @@ for weekday_idx, (tab, day_label) in enumerate(zip(tabs[:-1], WEEKDAY_TAB_LABELS
 
             row[0].write(" / ".join(ev.get("teams", [])) or "—")
             row[1].write(ev.get("organizer_name") or "—")
-            row[2].write(ev["title"])
+            # 제목에 장소/설명 툴팁 (hover 시 표시)
+            tooltip_parts = []
+            if ev.get("location"):
+                tooltip_parts.append(f"장소: {ev['location']}")
+            if ev.get("description"):
+                tooltip_parts.append(f"설명: {ev['description']}")
+            if tooltip_parts:
+                tip = html.escape("\n".join(tooltip_parts))
+                title_esc = html.escape(ev["title"])
+                row[2].markdown(
+                    f'<span title="{tip}" style="cursor:help">{title_esc}</span>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                row[2].write(ev["title"])
             row[3].write(f"{ev['start'].strftime('%H:%M')}~{ev['end'].strftime('%H:%M')}")
 
             attendees = ev.get("attendees", [])
