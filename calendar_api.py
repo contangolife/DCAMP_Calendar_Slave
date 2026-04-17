@@ -413,10 +413,9 @@ def _fetch_contact_names(cal_service) -> tuple[dict[str, str], str]:
     total = 0
     debug_parts: list[str] = []
 
-    # 1) 저장된 연락처 (내 주소록)
+    # 저장된 연락처 (내 주소록)에서 팀원 이름 조회
     try:
         page_token = None
-        cnt = 0
         while True:
             result = people_svc.people().connections().list(
                 resourceName="people/me",
@@ -425,38 +424,14 @@ def _fetch_contact_names(cal_service) -> tuple[dict[str, str], str]:
                 pageToken=page_token,
             ).execute()
             for person in result.get("connections", []):
-                cnt += 1
+                total += 1
                 _match_contact(person, names)
             page_token = result.get("nextPageToken")
             if not page_token:
                 break
-        total += cnt
-        debug_parts.append(f"주소록 {cnt}건")
+        debug_msg = f"Contacts API: 연락처 {total}건 조회, 팀원 {len(names)}명 매칭"
     except Exception as e:
-        debug_parts.append(f"주소록 실패({e})")
-
-    # 2) 기타 연락처 (Gmail 자동 저장)
-    try:
-        page_token = None
-        cnt = 0
-        while True:
-            result = people_svc.otherContacts().list(
-                readMask="names,emailAddresses",
-                pageSize=1000,
-                pageToken=page_token,
-            ).execute()
-            for person in result.get("otherContacts", []):
-                cnt += 1
-                _match_contact(person, names)
-            page_token = result.get("nextPageToken")
-            if not page_token:
-                break
-        total += cnt
-        debug_parts.append(f"기타 연락처 {cnt}건")
-    except Exception as e:
-        debug_parts.append(f"기타 연락처 실패({e})")
-
-    debug_msg = f"Contacts API: {' / '.join(debug_parts)}, 팀원 {len(names)}명 매칭"
+        debug_msg = f"Contacts API 실패: {e}"
     return names, debug_msg
 
 
