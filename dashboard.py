@@ -63,10 +63,24 @@ if has_oauth_config():
                 st.query_params.clear()
 
     # 2) 로그인 안 됐으면 로그인 화면
+    if "_auth_url" in st.session_state:
+        import streamlit.components.v1 as components
+        auth_url = st.session_state.pop("_auth_url")
+        components.html(
+            f"<script>"
+            f'window.open("{auth_url}", "_blank");'
+            f"setTimeout(function(){{ window.top.close(); }}, 500);"
+            f"</script>",
+            height=0,
+        )
+        st.info("새 탭에서 Google 로그인을 진행해주세요. 이 탭은 닫아도 됩니다.")
+        st.stop()
+
     if "user_creds" not in st.session_state:
         st.markdown("### Google 계정으로 로그인")
-        auth_url = get_auth_url(REDIRECT_URI)
-        st.link_button("Google 계정으로 로그인", auth_url, type="primary")
+        if st.button("Google 계정으로 로그인", type="primary"):
+            st.session_state._auth_url = get_auth_url(REDIRECT_URI)
+            st.rerun()
         st.caption("@dcamp.kr 계정으로 로그인하면 회의실 예약이 가능합니다.")
         st.stop()
 
