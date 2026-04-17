@@ -9,7 +9,10 @@ BASE_DIR = Path(__file__).parent
 # ─────────────────────────────────────────
 # Google OAuth
 # ─────────────────────────────────────────
-SCOPES = ["https://www.googleapis.com/auth/calendar"]
+SCOPES = [
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/directory.readonly",
+]
 CREDENTIALS_FILE = BASE_DIR / "credentials.json"
 TOKEN_FILE = BASE_DIR / "token.json"
 

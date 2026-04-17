@@ -380,17 +380,64 @@ def classify_events_per_person(events: list) -> dict:
     return {d: dict(v) for d, v in by_date_person.items()}
 
 
+def _fetch_directory_names(creds) -> dict[str, str]:
+    """People API Directory로 조직 전체 이름 조회 (1회 호출, 전 직원 커버)"""
+    names: dict[str, str] = {}
+    try:
+        people_svc = build("people", "v1", credentials=creds)
+        page_token = None
+        while True:
+            result = people_svc.people().listDirectoryPeople(
+                sources=["DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE"],
+                readMask="names,emailAddresses",
+                pageSize=200,
+                pageToken=page_token,
+            ).execute()
+            for person in result.get("people", []):
+                emails = [
+                    e.get("value", "").lower()
+                    for e in person.get("emailAddresses", [])
+                ]
+                display = ""
+                for n in person.get("names", []):
+                    display = n.get("displayName", "")
+                    if display:
+                        break
+                if display:
+                    for em in emails:
+                        if em in TEAM_MAP:
+                            names[em] = display
+            page_token = result.get("nextPageToken")
+            if not page_token:
+                break
+    except Exception:
+        pass
+    return names
+
+
 def build_email_to_name(events: list, service=None) -> dict[str, str]:
     """
     팀원 이메일 → 한국어 이름.
-    1순위: Calendar API로 캘린더 summary 조회 (= Google 프로필 이름)
-    2순위: 이벤트 attendees/organizer의 displayName
-    3순위: 이메일 앞부분
+    1순위: People API Directory (조직 프로필 — 가장 정확)
+    2순위: Calendar API 캘린더 summary
+    3순위: 이벤트 attendees/organizer의 displayName
+    4순위: 이메일 앞부분
     """
     email_to_name: dict[str, str] = {}
 
     if service:
+        # 1순위: People API Directory
+        try:
+            creds = service._http.credentials
+            directory_names = _fetch_directory_names(creds)
+            email_to_name.update(directory_names)
+        except Exception:
+            pass
+
+        # 2순위: Calendar summary
         for email in TEAM_MAP:
+            if email in email_to_name:
+                continue
             try:
                 cal = service.calendars().get(calendarId=email).execute()
                 name = cal.get("summary", "")
@@ -399,6 +446,7 @@ def build_email_to_name(events: list, service=None) -> dict[str, str]:
             except Exception:
                 pass
 
+    # 3순위: 이벤트 attendees/organizer displayName
     for ev in events:
         for att in ev.get("attendees", []) or []:
             email = att.get("email", "")
@@ -413,6 +461,7 @@ def build_email_to_name(events: list, service=None) -> dict[str, str]:
             if name:
                 email_to_name[email] = name
 
+    # 4순위: fallback
     for email in TEAM_MAP:
         email_to_name.setdefault(email, email.split("@")[0])
     return email_to_name
