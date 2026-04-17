@@ -380,11 +380,11 @@ def classify_events_per_person(events: list) -> dict:
     return {d: dict(v) for d, v in by_date_person.items()}
 
 
-def _fetch_directory_names(creds) -> dict[str, str]:
-    """People API Directory로 조직 전체 이름 조회 (1회 호출, 전 직원 커버)"""
+def _fetch_directory_names(cal_service) -> dict[str, str]:
+    """People API Directory로 조직 전체 이름 조회 (Calendar service의 인증을 재사용)"""
     names: dict[str, str] = {}
     try:
-        people_svc = build("people", "v1", credentials=creds)
+        people_svc = build("people", "v1", http=cal_service._http)
         page_token = None
         while True:
             result = people_svc.people().listDirectoryPeople(
@@ -427,12 +427,8 @@ def build_email_to_name(events: list, service=None) -> dict[str, str]:
 
     if service:
         # 1순위: People API Directory
-        try:
-            creds = service._http.credentials
-            directory_names = _fetch_directory_names(creds)
-            email_to_name.update(directory_names)
-        except Exception:
-            pass
+        directory_names = _fetch_directory_names(service)
+        email_to_name.update(directory_names)
 
         # 2순위: Calendar summary
         for email in TEAM_MAP:
