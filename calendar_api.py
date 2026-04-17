@@ -454,54 +454,16 @@ def _match_contact(person: dict, names: dict) -> None:
 def build_email_to_name(events: list, service=None) -> dict[str, str]:
     """
     팀원 이메일 → 한국어 이름.
-    1순위: People API Directory (조직 프로필 — 가장 정확)
-    2순위: Calendar API 캘린더 summary
-    3순위: 이벤트 attendees/organizer의 displayName
-    4순위: 이메일 앞부분
+    1순위: 내 연락처 (Contacts API)
+    2순위: 이메일 앞부분 (fallback)
     """
     email_to_name: dict[str, str] = {}
 
     if service:
-        # 1순위: Google Contacts (저장된 연락처 + 기타 연락처)
         contact_names, _contacts_debug = _fetch_contact_names(service)
         email_to_name.update(contact_names)
         email_to_name["_debug_people_api"] = _contacts_debug
 
-        # 2순위: Calendar summary (한국어 포함 시 우선)
-        for email in TEAM_MAP:
-            if email in email_to_name and _HANGUL_RE.search(email_to_name[email]):
-                continue
-            try:
-                cal = service.calendars().get(calendarId=email).execute()
-                name = cal.get("summary", "")
-                if name and name != email:
-                    if email not in email_to_name or _HANGUL_RE.search(name):
-                        email_to_name[email] = name
-            except Exception:
-                pass
-
-    # 3순위: 이벤트 attendees/organizer displayName (한국어 우선)
-    for ev in events:
-        for att in ev.get("attendees", []) or []:
-            email = att.get("email", "")
-            if email not in TEAM_MAP:
-                continue
-            name = att.get("displayName")
-            if not name:
-                continue
-            existing = email_to_name.get(email)
-            if not existing or (not _HANGUL_RE.search(existing) and _HANGUL_RE.search(name)):
-                email_to_name[email] = name
-        organizer = ev.get("organizer", {}) or {}
-        email = organizer.get("email", "")
-        if email in TEAM_MAP:
-            name = organizer.get("displayName")
-            if name:
-                existing = email_to_name.get(email)
-                if not existing or (not _HANGUL_RE.search(existing) and _HANGUL_RE.search(name)):
-                    email_to_name[email] = name
-
-    # 4순위: fallback
     for email in TEAM_MAP:
         email_to_name.setdefault(email, email.split("@")[0])
     return email_to_name
