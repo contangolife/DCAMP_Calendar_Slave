@@ -134,7 +134,7 @@ if cache_key not in st.session_state:
         events, errors = fetch_team_events(service, week_offset)
         by_date_team = classify_events(events, ROOM_RESOURCES)
         by_date_person = classify_events_per_person(events)
-        email_to_name = build_email_to_name(events)
+        email_to_name = build_email_to_name(events, service)
         my_bookings = fetch_my_bookings(service, week_offset)
         st.session_state[cache_key] = {
             "by_date_team":   by_date_team,

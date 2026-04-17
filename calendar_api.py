@@ -377,9 +377,25 @@ def classify_events_per_person(events: list) -> dict:
     return {d: dict(v) for d, v in by_date_person.items()}
 
 
-def build_email_to_name(events: list) -> dict[str, str]:
-    """팀원 이메일 → displayName (이벤트의 attendees/organizer에서 추출, 없으면 이메일 앞부분)"""
+def build_email_to_name(events: list, service=None) -> dict[str, str]:
+    """
+    팀원 이메일 → 한국어 이름.
+    1순위: Calendar API로 캘린더 summary 조회 (= Google 프로필 이름)
+    2순위: 이벤트 attendees/organizer의 displayName
+    3순위: 이메일 앞부분
+    """
     email_to_name: dict[str, str] = {}
+
+    if service:
+        for email in TEAM_MAP:
+            try:
+                cal = service.calendars().get(calendarId=email).execute()
+                name = cal.get("summary", "")
+                if name and name != email:
+                    email_to_name[email] = name
+            except Exception:
+                pass
+
     for ev in events:
         for att in ev.get("attendees", []) or []:
             email = att.get("email", "")
@@ -393,6 +409,7 @@ def build_email_to_name(events: list) -> dict[str, str]:
             name = organizer.get("displayName")
             if name:
                 email_to_name[email] = name
+
     for email in TEAM_MAP:
         email_to_name.setdefault(email, email.split("@")[0])
     return email_to_name
