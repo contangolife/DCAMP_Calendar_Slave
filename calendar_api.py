@@ -653,24 +653,29 @@ def _week_offset_for_date(dt: datetime) -> int:
 def build_sms(date_str: str, team_events: dict, my_bookings: dict) -> str:
     """
     team_events: {팀: [entries]}
-    my_bookings: {원본_id: 미러_이벤트} — 미러 예약 반영용
+    my_bookings: {원본_id: [미러_이벤트, ...]} — 미러 예약 반영용
 
-    회의실이 배정된 일정만 포함. 모든 팀이 비면 빈 문자열 반환.
+    회의실이 배정된 일정만 포함. 팀 이름은 일정 유무와 관계없이 항상 표시.
     """
     date = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=TZ)
     weekday = WEEKDAY_KO[date.weekday()]
 
-    team_blocks: list[str] = []
+    lines = [f"💡 {date.month}/{date.day} {weekday}요일, 회의실 안내드립니다!"]
+    lines.append("")
+
     for team in TEAM_ORDER:
+        lines.append(f"□ {team}")
+
         evs = team_events.get(team)
         if not evs:
+            lines.append("")
             continue
 
         seen: set = set()
         unique_evs = [e for e in evs if not (e["id"] in seen or seen.add(e["id"]))]
         unique_evs.sort(key=lambda x: x["start"])
 
-        team_lines: list[str] = []
+        has_entry = False
         for ev in unique_evs:
             rooms = list(ev["rooms"])
             for mirror in my_bookings.get(ev["id"], []):
@@ -685,16 +690,12 @@ def build_sms(date_str: str, team_events: dict, my_bookings: dict) -> str:
                 continue
             room_str = " / ".join(rooms)
             t = f"{ev['start'].strftime('%H:%M')}~{ev['end'].strftime('%H:%M')}"
-            team_lines.append(f"[{room_str}] {t} {ev['title']}")
+            lines.append(f"  [{room_str}] {t} {ev['title']}")
+            has_entry = True
 
-        if team_lines:
-            team_blocks.append(f"□ {team}")
-            team_blocks.extend(team_lines)
+        if not has_entry:
+            pass
+        lines.append("")
 
-    if not team_blocks:
-        return ""
-
-    lines = [f"💡 {date.month}/{date.day} {weekday}요일, 회의실 안내드립니다!"]
-    lines.extend(team_blocks)
     lines.append("추가 일정이나 변경 사항 있으시면 반영하겠습니다. 감사합니다.")
     return "\n".join(lines)
