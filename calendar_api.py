@@ -380,8 +380,27 @@ def classify_events_per_person(events: list) -> dict:
     return {d: dict(v) for d, v in by_date_person.items()}
 
 
+_HANGUL_RE = re.compile(r'[\uac00-\ud7a3]')
+
+
+def _pick_korean_name(name_entries: list) -> str:
+    """여러 name 항목 중 한국어 이름 우선, 없으면 첫 번째"""
+    korean = ""
+    fallback = ""
+    for n in name_entries:
+        dn = n.get("displayName", "")
+        if not dn:
+            continue
+        if not fallback:
+            fallback = dn
+        if _HANGUL_RE.search(dn):
+            korean = dn
+            break
+    return korean or fallback
+
+
 def _fetch_directory_names(cal_service) -> dict[str, str]:
-    """People API Directory로 조직 전체 이름 조회 (Calendar service의 인증을 재사용)"""
+    """People API Directory로 조직 전체 이름 조회 (한국어 이름 우선)"""
     names: dict[str, str] = {}
     try:
         people_svc = build("people", "v1", http=cal_service._http)
@@ -398,11 +417,7 @@ def _fetch_directory_names(cal_service) -> dict[str, str]:
                     e.get("value", "").lower()
                     for e in person.get("emailAddresses", [])
                 ]
-                display = ""
-                for n in person.get("names", []):
-                    display = n.get("displayName", "")
-                    if display:
-                        break
+                display = _pick_korean_name(person.get("names", []))
                 if display:
                     for em in emails:
                         if em in TEAM_MAP:
@@ -430,32 +445,39 @@ def build_email_to_name(events: list, service=None) -> dict[str, str]:
         directory_names = _fetch_directory_names(service)
         email_to_name.update(directory_names)
 
-        # 2순위: Calendar summary
+        # 2순위: Calendar summary (한국어 포함 시 우선)
         for email in TEAM_MAP:
-            if email in email_to_name:
+            if email in email_to_name and _HANGUL_RE.search(email_to_name[email]):
                 continue
             try:
                 cal = service.calendars().get(calendarId=email).execute()
                 name = cal.get("summary", "")
                 if name and name != email:
-                    email_to_name[email] = name
+                    if email not in email_to_name or _HANGUL_RE.search(name):
+                        email_to_name[email] = name
             except Exception:
                 pass
 
-    # 3순위: 이벤트 attendees/organizer displayName
+    # 3순위: 이벤트 attendees/organizer displayName (한국어 우선)
     for ev in events:
         for att in ev.get("attendees", []) or []:
             email = att.get("email", "")
-            if email in TEAM_MAP and email not in email_to_name:
-                name = att.get("displayName")
-                if name:
-                    email_to_name[email] = name
+            if email not in TEAM_MAP:
+                continue
+            name = att.get("displayName")
+            if not name:
+                continue
+            existing = email_to_name.get(email)
+            if not existing or (not _HANGUL_RE.search(existing) and _HANGUL_RE.search(name)):
+                email_to_name[email] = name
         organizer = ev.get("organizer", {}) or {}
         email = organizer.get("email", "")
-        if email in TEAM_MAP and email not in email_to_name:
+        if email in TEAM_MAP:
             name = organizer.get("displayName")
             if name:
-                email_to_name[email] = name
+                existing = email_to_name.get(email)
+                if not existing or (not _HANGUL_RE.search(existing) and _HANGUL_RE.search(name)):
+                    email_to_name[email] = name
 
     # 4순위: fallback
     for email in TEAM_MAP:
