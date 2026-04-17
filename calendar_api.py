@@ -254,15 +254,18 @@ def is_valid_room_name(name: str) -> bool:
     return bool(ROOM_NAME_PATTERN.match(name))
 
 
-def extract_attendee_names(event: dict) -> list[str]:
-    """참석자 이름 목록 (회의실 리소스 제외, displayName 우선, 없으면 이메일 local-part)"""
+def extract_attendee_names(event: dict, email_to_name: dict | None = None) -> list[str]:
+    """참석자 이름 목록 (회의실 리소스 제외, email_to_name → displayName → 이메일 local-part)"""
     names: list[str] = []
     seen: set[str] = set()
     for att in event.get("attendees", []):
         email = att.get("email", "")
         if not email or "@resource.calendar.google.com" in email:
             continue
-        name = att.get("displayName") or email.split("@")[0]
+        if email_to_name and email in email_to_name:
+            name = email_to_name[email]
+        else:
+            name = att.get("displayName") or email.split("@")[0]
         if name and name not in seen:
             seen.add(name)
             names.append(name)
@@ -415,7 +418,7 @@ def build_email_to_name(events: list, service=None) -> dict[str, str]:
     return email_to_name
 
 
-def classify_events(events: list, room_resources: dict) -> dict:
+def classify_events(events: list, room_resources: dict, email_to_name: dict | None = None) -> dict:
     """이벤트를 {날짜: {팀: [entries]}} 구조로 변환"""
     by_date_team: dict = defaultdict(lambda: defaultdict(list))
 
@@ -445,9 +448,12 @@ def classify_events(events: list, room_resources: dict) -> dict:
         date_key = start.strftime("%Y-%m-%d")
         organizer = ev.get("organizer", {}) or {}
         organizer_email = organizer.get("email", "")
-        organizer_name = organizer.get("displayName") or (
-            organizer_email.split("@")[0] if organizer_email else ""
-        )
+        if email_to_name and organizer_email in email_to_name:
+            organizer_name = email_to_name[organizer_email]
+        else:
+            organizer_name = organizer.get("displayName") or (
+                organizer_email.split("@")[0] if organizer_email else ""
+            )
 
         raw_desc = ev.get("description", "") or ""
         clean_desc = re.sub(r"<[^>]+>", "", raw_desc).strip()
@@ -461,7 +467,7 @@ def classify_events(events: list, room_resources: dict) -> dict:
             "organizer": organizer_email,
             "organizer_name": organizer_name,
             "teams": sorted(teams, key=lambda t: TEAM_ORDER.index(t) if t in TEAM_ORDER else 99),
-            "attendees": extract_attendee_names(ev),
+            "attendees": extract_attendee_names(ev, email_to_name),
             "location": (ev.get("location") or "").strip(),
             "description": clean_desc,
         }
