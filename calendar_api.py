@@ -436,7 +436,7 @@ def _fetch_contact_names(cal_service) -> tuple[dict[str, str], str]:
 
 
 def _match_contact(person: dict, names: dict) -> None:
-    """연락처 한 건에서 팀원 이메일 매칭 → 한국어 이름 저장"""
+    """연락처 한 건에서 이메일 → 한국어 이름 저장 (팀원 외 참석자 포함)"""
     emails = [
         e.get("value", "").lower()
         for e in person.get("emailAddresses", [])
@@ -445,10 +445,9 @@ def _match_contact(person: dict, names: dict) -> None:
     if not display:
         return
     for em in emails:
-        if em in TEAM_MAP:
-            existing = names.get(em, "")
-            if not existing or (not _HANGUL_RE.search(existing) and _HANGUL_RE.search(display)):
-                names[em] = display
+        existing = names.get(em, "")
+        if not existing or (not _HANGUL_RE.search(existing) and _HANGUL_RE.search(display)):
+            names[em] = display
 
 
 def build_email_to_name(events: list, service=None) -> dict[str, str]:
