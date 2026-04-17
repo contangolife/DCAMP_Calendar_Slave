@@ -148,25 +148,42 @@ def has_oauth_config() -> bool:
 
 
 def get_auth_url(redirect_uri: str) -> str:
-    """Google OAuth 인증 URL 생성 — 사용자를 이 URL로 보내면 Google 로그인 화면이 뜸"""
-    from google_auth_oauthlib.flow import Flow
-    config = _get_oauth_client_config()
-    flow = Flow.from_client_config(config, scopes=SCOPES, redirect_uri=redirect_uri)
-    auth_url, _ = flow.authorization_url(
-        access_type="offline",
-        include_granted_scopes="true",
-        prompt="consent",
-    )
-    return auth_url
+    """Google OAuth 인증 URL 생성 (PKCE 없이 — 리디렉트 후 session 유실 문제 회피)"""
+    import urllib.parse
+    config = _get_oauth_client_config()["web"]
+    params = {
+        "client_id": config["client_id"],
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": " ".join(SCOPES),
+        "access_type": "offline",
+        "prompt": "consent",
+    }
+    return f"{config['auth_uri']}?{urllib.parse.urlencode(params)}"
 
 
 def exchange_code_for_credentials(code: str, redirect_uri: str) -> Credentials:
-    """OAuth 인가 코드를 Credentials로 교환"""
-    from google_auth_oauthlib.flow import Flow
-    config = _get_oauth_client_config()
-    flow = Flow.from_client_config(config, scopes=SCOPES, redirect_uri=redirect_uri)
-    flow.fetch_token(code=code)
-    return flow.credentials
+    """OAuth 인가 코드를 Credentials로 교환 (PKCE 없이 직접 POST)"""
+    import requests as _requests
+    config = _get_oauth_client_config()["web"]
+    resp = _requests.post(config["token_uri"], data={
+        "code": code,
+        "client_id": config["client_id"],
+        "client_secret": config["client_secret"],
+        "redirect_uri": redirect_uri,
+        "grant_type": "authorization_code",
+    })
+    token_data = resp.json()
+    if "error" in token_data:
+        raise RuntimeError(token_data.get("error_description", token_data["error"]))
+    return Credentials(
+        token=token_data["access_token"],
+        refresh_token=token_data.get("refresh_token"),
+        token_uri=config["token_uri"],
+        client_id=config["client_id"],
+        client_secret=config["client_secret"],
+        scopes=SCOPES,
+    )
 
 
 def build_service_from_creds_json(creds_json: str):
