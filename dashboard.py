@@ -207,6 +207,38 @@ st.markdown(
     .tm-ev-loc { background: #dbeafe; color: #1e40af; }
     .tm-ev-focus { background: #ede9fe; color: #5b21b6; }
     .tm-free { font-size: 11px; color: #9ca3af; font-style: italic; }
+
+    /* 커스텀 툴팁 — hover(데스크톱) + tap/focus(모바일) */
+    .ev-tip {
+        position: relative;
+        cursor: help;
+        border-bottom: 1px dotted #9ca3af;
+    }
+    .ev-tip .ev-tip-body {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        margin-top: 4px;
+        background: #1f2937;
+        color: #f3f4f6;
+        padding: 10px 14px;
+        border-radius: 8px;
+        font-size: 12px;
+        line-height: 1.5;
+        white-space: pre-line;
+        min-width: 260px;
+        max-width: 400px;
+        z-index: 9999;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+        pointer-events: none;
+    }
+    .ev-tip:hover .ev-tip-body,
+    .ev-tip:focus .ev-tip-body {
+        display: block;
+    }
+    .ev-tip:focus { outline: none; }
+    .ev-tip-label { font-weight: 600; color: #93c5fd; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -376,21 +408,24 @@ for weekday_idx, (tab, day_label) in enumerate(zip(tabs[:-1], WEEKDAY_TAB_LABELS
 
             row[0].write(" / ".join(ev.get("teams", [])) or "—")
             row[1].write(ev.get("organizer_name") or "—")
-            # 제목에 장소/설명 툴팁 (hover 시 표시)
-            tip_parts: list[str] = []
+            # 제목 + 장소/설명 커스텀 툴팁 (hover + 모바일 tap)
+            tip_lines: list[str] = []
             if ev.get("location"):
-                tip_parts.append(f"장소: {ev['location']}")
+                loc = html.escape(ev["location"])
+                tip_lines.append(f'<span class="ev-tip-label">장소</span> {loc}')
             if ev.get("description"):
-                desc = ev["description"].replace("\n", " ").strip()
-                if len(desc) > 150:
-                    desc = desc[:150] + "..."
-                tip_parts.append(f"설명: {desc}")
-            if tip_parts:
-                tip_text = " | ".join(tip_parts)
-                tip_safe = html.escape(tip_text, quote=True)
+                desc = ev["description"].strip()
+                if len(desc) > 200:
+                    desc = desc[:200] + "..."
+                tip_lines.append(
+                    f'<span class="ev-tip-label">설명</span> {html.escape(desc)}'
+                )
+            if tip_lines:
                 title_esc = html.escape(ev["title"])
+                tip_body = "\n".join(tip_lines)
                 row[2].markdown(
-                    f'<span title="{tip_safe}" style="cursor:help">{title_esc}</span>',
+                    f'<span class="ev-tip" tabindex="0">{title_esc}'
+                    f'<span class="ev-tip-body">{tip_body}</span></span>',
                     unsafe_allow_html=True,
                 )
             else:
