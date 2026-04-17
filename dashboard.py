@@ -13,6 +13,11 @@ import streamlit as st
 from config import ROOM_RESOURCES, TEAM_ORDER, TEAM_MAP, WEEKDAY_KO, TZ
 from calendar_api import (
     authenticate,
+    has_oauth_config,
+    get_auth_url,
+    exchange_code_for_credentials,
+    build_service_from_creds_json,
+    get_user_email,
     fetch_team_events,
     fetch_my_bookings,
     classify_events,
@@ -35,12 +40,59 @@ st.set_page_config(
 st.title("📆 회의실 예약 대시보드")
 
 # ─────────────────────────────────────────
-# 인증 (1회)
+# 인증 — per-user OAuth (Cloud) / 공유 토큰 (로컬)
 # ─────────────────────────────────────────
-if "service" not in st.session_state:
-    with st.spinner("Google 인증 중..."):
-        st.session_state.service = authenticate()
-service = st.session_state.service
+REDIRECT_URI = "https://dcampcalerderslave-ppqgkxai9nddumkpn6dzjg.streamlit.app/"
+
+if has_oauth_config():
+    # ── Per-user OAuth 플로우 ──
+    # 1) OAuth 콜백 처리 (?code=xxx)
+    if "user_creds" not in st.session_state:
+        code = st.query_params.get("code")
+        if code:
+            try:
+                creds = exchange_code_for_credentials(code, REDIRECT_URI)
+                svc = build_service_from_creds_json(creds.to_json())[0]
+                email = get_user_email(svc)
+                st.session_state.user_creds = creds.to_json()
+                st.session_state.user_email = email
+                st.query_params.clear()
+                st.rerun()
+            except Exception as e:
+                st.error(f"로그인 실패: {e}")
+                st.query_params.clear()
+
+    # 2) 로그인 안 됐으면 로그인 화면
+    if "user_creds" not in st.session_state:
+        st.markdown("### Google 계정으로 로그인")
+        auth_url = get_auth_url(REDIRECT_URI)
+        st.link_button("Google 계정으로 로그인", auth_url, type="primary")
+        st.caption("@dcamp.kr 계정으로 로그인하면 회의실 예약이 가능합니다.")
+        st.stop()
+
+    # 3) 로그인 된 상태 — 서비스 빌드 (만료 시 자동 갱신)
+    try:
+        service, updated_json = build_service_from_creds_json(st.session_state.user_creds)
+        st.session_state.user_creds = updated_json
+    except Exception:
+        for k in ["user_creds", "user_email"]:
+            st.session_state.pop(k, None)
+        st.rerun()
+
+    user_email = st.session_state.get("user_email", "")
+    user_cols = st.columns([5, 1])
+    user_cols[0].caption(f"**{user_email}** 로그인됨")
+    if user_cols[1].button("로그아웃", use_container_width=True):
+        for k in list(st.session_state.keys()):
+            del st.session_state[k]
+        st.rerun()
+
+else:
+    # ── 로컬 / 공유 토큰 fallback ──
+    if "service" not in st.session_state:
+        with st.spinner("Google 인증 중..."):
+            st.session_state.service = authenticate()
+    service = st.session_state.service
 
 # ─────────────────────────────────────────
 # 주차 선택
@@ -418,7 +470,7 @@ for weekday_idx, (tab, day_label) in enumerate(zip(tabs[:-1], WEEKDAY_TAB_LABELS
 # ─────────────────────────────────────────
 with tabs[-1]:
     st.markdown("### 📋 안내 문자")
-    st.caption("각 박스의 내용을 복사해서 팀 카톡방에 붙여넣으세요.")
+    st.caption("각 박스의 내용을 복사하세요.")
 
     date_keys = sorted(by_date_team.keys())
     rendered = 0

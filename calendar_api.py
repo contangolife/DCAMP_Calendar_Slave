@@ -122,6 +122,75 @@ def authenticate():
 
 
 # ─────────────────────────────────────────
+# Per-user 웹 OAuth (Streamlit Cloud용)
+# ─────────────────────────────────────────
+
+def _get_oauth_client_config() -> dict:
+    """Streamlit Secrets [oauth] 섹션에서 웹 OAuth 클라이언트 설정 로드"""
+    import streamlit as st
+    return {
+        "web": {
+            "client_id":     st.secrets["oauth"]["client_id"],
+            "client_secret": st.secrets["oauth"]["client_secret"],
+            "auth_uri":      "https://accounts.google.com/o/oauth2/auth",
+            "token_uri":     "https://oauth2.googleapis.com/token",
+        }
+    }
+
+
+def has_oauth_config() -> bool:
+    """Streamlit Secrets에 [oauth] 설정이 있는지 확인"""
+    try:
+        import streamlit as st
+        return "oauth" in st.secrets and "client_id" in st.secrets["oauth"]
+    except Exception:
+        return False
+
+
+def get_auth_url(redirect_uri: str) -> str:
+    """Google OAuth 인증 URL 생성 — 사용자를 이 URL로 보내면 Google 로그인 화면이 뜸"""
+    from google_auth_oauthlib.flow import Flow
+    config = _get_oauth_client_config()
+    flow = Flow.from_client_config(config, scopes=SCOPES, redirect_uri=redirect_uri)
+    auth_url, _ = flow.authorization_url(
+        access_type="offline",
+        include_granted_scopes="true",
+        prompt="consent",
+    )
+    return auth_url
+
+
+def exchange_code_for_credentials(code: str, redirect_uri: str) -> Credentials:
+    """OAuth 인가 코드를 Credentials로 교환"""
+    from google_auth_oauthlib.flow import Flow
+    config = _get_oauth_client_config()
+    flow = Flow.from_client_config(config, scopes=SCOPES, redirect_uri=redirect_uri)
+    flow.fetch_token(code=code)
+    return flow.credentials
+
+
+def build_service_from_creds_json(creds_json: str):
+    """
+    저장된 JSON 문자열로부터 Calendar 서비스 빌드.
+    만료 시 자동 갱신.
+    Returns: (service, updated_creds_json)
+    """
+    creds = Credentials.from_authorized_user_info(json.loads(creds_json), SCOPES)
+    if creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+    return build("calendar", "v3", credentials=creds), creds.to_json()
+
+
+def get_user_email(service) -> str:
+    """Calendar API로 로그인된 사용자의 이메일 조회 (추가 스코프 불필요)"""
+    try:
+        cal = service.calendars().get(calendarId="primary").execute()
+        return cal.get("id", "")
+    except Exception:
+        return ""
+
+
+# ─────────────────────────────────────────
 # 시간 유틸
 # ─────────────────────────────────────────
 
