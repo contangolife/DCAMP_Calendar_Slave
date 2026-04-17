@@ -423,8 +423,6 @@ for weekday_idx, (tab, day_label) in enumerate(zip(tabs[:-1], WEEKDAY_TAB_LABELS
                 tip_html_parts.append(f'<span class="ev-tip-label">장소</span> {loc}')
             if ev.get("description"):
                 desc = ev["description"].strip()
-                if len(desc) > 200:
-                    desc = desc[:200] + "..."
                 desc_esc = _safe_esc(desc).replace("\n", "<br>")
                 tip_html_parts.append(f'<span class="ev-tip-label">설명</span> {desc_esc}')
             if tip_html_parts:
