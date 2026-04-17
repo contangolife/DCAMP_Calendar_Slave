@@ -63,20 +63,10 @@ if has_oauth_config():
                 st.query_params.clear()
 
     # 2) 로그인 안 됐으면 로그인 화면
-    if "_auth_redirect" in st.session_state:
-        url = st.session_state.pop("_auth_redirect")
-        st.markdown(
-            f'<meta http-equiv="refresh" content="0;url={url}">',
-            unsafe_allow_html=True,
-        )
-        st.info("Google 로그인 페이지로 이동 중...")
-        st.stop()
-
     if "user_creds" not in st.session_state:
         st.markdown("### Google 계정으로 로그인")
-        if st.button("Google 계정으로 로그인", type="primary"):
-            st.session_state._auth_redirect = get_auth_url(REDIRECT_URI)
-            st.rerun()
+        auth_url = get_auth_url(REDIRECT_URI)
+        st.link_button("Google 계정으로 로그인", auth_url, type="primary")
         st.caption("@dcamp.kr 계정으로 로그인하면 회의실 예약이 가능합니다.")
         st.stop()
 
