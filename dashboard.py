@@ -158,6 +158,14 @@ def invalidate_cache():
         del st.session_state[cache_key]
 
 
+def _safe_esc(text: str) -> str:
+    """HTML + 마크다운 특수문자 모두 이스케이프 (st.markdown 안에서 안전하게 표시)"""
+    s = html.escape(text, quote=True)
+    for ch, entity in (("~", "&#126;"), ("*", "&#42;"), ("_", "&#95;"), ("`", "&#96;")):
+        s = s.replace(ch, entity)
+    return s
+
+
 # ─────────────────────────────────────────
 # 팀 현황 스트립 CSS + 렌더러
 # ─────────────────────────────────────────
@@ -411,16 +419,16 @@ for weekday_idx, (tab, day_label) in enumerate(zip(tabs[:-1], WEEKDAY_TAB_LABELS
             # 제목 + 장소/설명 커스텀 툴팁 (hover + 모바일 tap)
             tip_html_parts: list[str] = []
             if ev.get("location"):
-                loc = html.escape(ev["location"]).replace("\n", " ")
+                loc = _safe_esc(ev["location"]).replace("\n", " ")
                 tip_html_parts.append(f'<span class="ev-tip-label">장소</span> {loc}')
             if ev.get("description"):
                 desc = ev["description"].strip()
                 if len(desc) > 200:
                     desc = desc[:200] + "..."
-                desc_esc = html.escape(desc).replace("\n", "<br>")
+                desc_esc = _safe_esc(desc).replace("\n", "<br>")
                 tip_html_parts.append(f'<span class="ev-tip-label">설명</span> {desc_esc}')
             if tip_html_parts:
-                title_esc = html.escape(ev["title"])
+                title_esc = _safe_esc(ev["title"])
                 tip_body = "<br>".join(tip_html_parts)
                 row[2].markdown(f'<span class="ev-tip" tabindex="0">{title_esc}<span class="ev-tip-body">{tip_body}</span></span>', unsafe_allow_html=True)
             else:
