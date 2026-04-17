@@ -399,12 +399,14 @@ def _pick_korean_name(name_entries: list) -> str:
     return korean or fallback
 
 
-def _fetch_directory_names(cal_service) -> dict[str, str]:
-    """People API Directory로 조직 전체 이름 조회 (한국어 이름 우선)"""
+def _fetch_directory_names(cal_service) -> tuple[dict[str, str], str]:
+    """People API Directory로 조직 전체 이름 조회 (한국어 이름 우선). 디버그 메시지도 반환."""
     names: dict[str, str] = {}
+    debug_msg = ""
     try:
         people_svc = build("people", "v1", http=cal_service._http)
         page_token = None
+        total_people = 0
         while True:
             result = people_svc.people().listDirectoryPeople(
                 sources=["DIRECTORY_SOURCE_TYPE_DOMAIN_PROFILE"],
@@ -412,7 +414,9 @@ def _fetch_directory_names(cal_service) -> dict[str, str]:
                 pageSize=200,
                 pageToken=page_token,
             ).execute()
-            for person in result.get("people", []):
+            people = result.get("people", [])
+            total_people += len(people)
+            for person in people:
                 emails = [
                     e.get("value", "").lower()
                     for e in person.get("emailAddresses", [])
@@ -425,9 +429,10 @@ def _fetch_directory_names(cal_service) -> dict[str, str]:
             page_token = result.get("nextPageToken")
             if not page_token:
                 break
-    except Exception:
-        pass
-    return names
+        debug_msg = f"People API: {total_people}명 조회, 팀원 {len(names)}명 매칭"
+    except Exception as e:
+        debug_msg = f"People API 실패: {e}"
+    return names, debug_msg
 
 
 def build_email_to_name(events: list, service=None) -> dict[str, str]:
@@ -442,8 +447,9 @@ def build_email_to_name(events: list, service=None) -> dict[str, str]:
 
     if service:
         # 1순위: People API Directory
-        directory_names = _fetch_directory_names(service)
+        directory_names, _people_debug = _fetch_directory_names(service)
         email_to_name.update(directory_names)
+        email_to_name["_debug_people_api"] = _people_debug
 
         # 2순위: Calendar summary (한국어 포함 시 우선)
         for email in TEAM_MAP:

@@ -314,6 +314,11 @@ def render_team_strip(date_str: str) -> None:
 # ─────────────────────────────────────────
 # 오류 표시
 # ─────────────────────────────────────────
+# 임시 디버그: People API 상태
+_people_debug = email_to_name.pop("_debug_people_api", "")
+if _people_debug:
+    st.caption(f"[디버그] {_people_debug}")
+
 if errors:
     with st.expander(f"⚠️ 조회 오류 {len(errors)}건"):
         for e in errors:
