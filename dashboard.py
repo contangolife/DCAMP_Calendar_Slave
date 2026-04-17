@@ -184,37 +184,48 @@ st.markdown(
         min-width: 160px;
         max-width: 180px;
         flex: 0 0 auto;
-        border: 1px solid #e5e7eb;
+        border: 1px solid rgba(255,255,255,0.08);
         border-radius: 8px;
         padding: 8px 10px;
-        background: #ffffff;
+        background: rgba(255,255,255,0.04);
     }
     .tm-name {
-        font-weight: 600;
+        font-weight: 700;
         font-size: 13px;
-        color: #111827;
         line-height: 1.2;
     }
     .tm-team {
         font-size: 10px;
-        color: #6b7280;
+        color: #9ca3af;
         margin-bottom: 6px;
     }
-    .tm-events { display: flex; flex-direction: column; gap: 3px; }
+    .tm-events { display: flex; flex-direction: column; gap: 4px; }
     .tm-ev {
         font-size: 11px;
-        padding: 3px 6px;
-        background: #f3f4f6;
+        font-weight: 500;
+        padding: 4px 8px;
+        background: rgba(99,102,241,0.15);
+        color: #818cf8;
         border-radius: 4px;
-        color: #374151;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
     }
-    .tm-ev-ooo { background: #fee2e2; color: #991b1b; }
-    .tm-ev-loc { background: #dbeafe; color: #1e40af; }
-    .tm-ev-focus { background: #ede9fe; color: #5b21b6; }
-    .tm-free { font-size: 11px; color: #9ca3af; font-style: italic; }
+    .tm-ev-ooo {
+        background: rgba(239,68,68,0.2);
+        color: #f87171;
+        font-weight: 600;
+    }
+    .tm-ev-loc {
+        background: rgba(59,130,246,0.2);
+        color: #60a5fa;
+        font-weight: 600;
+    }
+    .tm-ev-focus {
+        background: rgba(139,92,246,0.2);
+        color: #a78bfa;
+    }
+    .tm-free { font-size: 11px; color: #4b5563; font-style: italic; }
 
     /* 커스텀 툴팁 — hover(데스크톱) + tap/focus(모바일) */
     .ev-tip {
