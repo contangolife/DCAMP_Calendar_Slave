@@ -351,7 +351,7 @@ if errors:
 WEEKDAY_TAB_LABELS = ["월", "화", "수", "목", "금"]
 tabs = st.tabs(WEEKDAY_TAB_LABELS + ["📋 문자 생성"])
 
-COL_WIDTHS = [1.4, 1.3, 2.8, 1.2, 2.0, 1.8, 1.6, 1.0]
+COL_WIDTHS = [1.4, 1.3, 2.8, 1.2, 2.0, 1.8, 1.6]
 
 monday, _ = get_week_range(week_offset)
 
@@ -446,7 +446,6 @@ for weekday_idx, (tab, day_label) in enumerate(zip(tabs[:-1], WEEKDAY_TAB_LABELS
         header[4].caption("**참석자**")
         header[5].caption("**회의실 현황**")
         header[6].caption("**회의실 선택**")
-        header[7].caption("**액션**")
 
         for idx, ev in enumerate(all_evs):
             row = st.columns(COL_WIDTHS)
@@ -487,7 +486,6 @@ for weekday_idx, (tab, day_label) in enumerate(zip(tabs[:-1], WEEKDAY_TAB_LABELS
             if has_original_room:
                 row[5].markdown(f"🏢 `{' / '.join(ev['rooms'])}` _(원본)_")
                 row[6].write("—")
-                row[7].write("—")
             elif my_rooms:
                 with row[5].popover(
                     f"✅ {' / '.join(my_rooms)} ▾",
@@ -515,13 +513,19 @@ for weekday_idx, (tab, day_label) in enumerate(zip(tabs[:-1], WEEKDAY_TAB_LABELS
                                     week_offset,
                                     mirror_event_ids={mid},
                                 )
-                            if result["status"] == "ok":
+                            status = result["status"]
+                            if status == "ok":
                                 st.success(result["message"])
-                            elif result["status"] == "partial":
+                            elif status == "partial":
                                 st.warning(result["message"])
+                            elif status == "not_found":
+                                st.info("이미 취소된 예약입니다. 목록에서 제거합니다.")
                             else:
                                 st.error(result["message"])
+                            # 로컬 캐시 정리: not_found도 UI에서는 제거 (유령 예약 정리)
                             deleted = set(result.get("deleted_mirror_ids", []))
+                            if status == "not_found":
+                                deleted = {mid}
                             if deleted:
                                 if mroom in room_busy:
                                     room_busy[mroom] = [
@@ -538,7 +542,6 @@ for weekday_idx, (tab, day_label) in enumerate(zip(tabs[:-1], WEEKDAY_TAB_LABELS
                                     my_bookings.pop(ev["id"], None)
                             st.rerun()
                 row[6].write("—")
-                row[7].write("—")
             else:
                 row[5].markdown("🔴 **미배정**")
                 available = available_rooms_at(room_busy, ev["start"], ev["end"])
@@ -558,7 +561,6 @@ for weekday_idx, (tab, day_label) in enumerate(zip(tabs[:-1], WEEKDAY_TAB_LABELS
                     )
                 else:
                     row[6].markdown("_예약 가능한 회의실 없음_")
-                row[7].write("—")
 
         # 일괄 예약 처리 — 하나의 이벤트에 여러 회의실 선택 시 회의실 개수만큼 book_meeting 호출
         if batch_clicked:
