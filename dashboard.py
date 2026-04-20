@@ -264,6 +264,21 @@ st.markdown(
     }
     .ev-tip:focus { outline: none; }
     .ev-tip-label { font-weight: 600; color: #93c5fd; }
+
+    /* 예약 취소 popover 안의 ✕ 버튼 — 박스 제거, 텍스트만 */
+    [data-baseweb="popover"] .stButton > button {
+        border: none !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        padding: 2px 6px !important;
+        min-height: auto !important;
+        font-size: 16px !important;
+        color: #9ca3af !important;
+    }
+    [data-baseweb="popover"] .stButton > button:hover {
+        color: #ef4444 !important;
+        background: transparent !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -478,7 +493,7 @@ for weekday_idx, (tab, day_label) in enumerate(zip(tabs[:-1], WEEKDAY_TAB_LABELS
                     f"✅ {' / '.join(my_rooms)} ▾",
                     use_container_width=True,
                 ):
-                    st.caption("내 예약 — 방별 취소")
+                    st.caption("내 예약")
                     for mirror in my_mirror_list:
                         mroom = (
                             mirror.get("extendedProperties", {})

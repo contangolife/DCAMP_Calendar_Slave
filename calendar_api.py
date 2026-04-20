@@ -798,9 +798,10 @@ def _week_offset_for_date(dt: datetime) -> int:
 def build_sms(date_str: str, team_events: dict, my_bookings: dict) -> str:
     """
     team_events: {팀: [entries]}
-    my_bookings: {원본_id: [미러_이벤트, ...]} — 미러 예약 반영용
+    my_bookings: {원본_id: [미러_이벤트, ...]}
 
-    회의실이 배정된 일정만 포함. 팀 이름은 일정 유무와 관계없이 항상 표시.
+    내가 이 대시보드로 직접 예약한 회의만 포함 (남이 잡은 방은 제외).
+    팀 이름은 일정 유무와 관계없이 항상 표시.
     """
     date = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=TZ)
     weekday = WEEKDAY_KO[date.weekday()]
@@ -818,8 +819,11 @@ def build_sms(date_str: str, team_events: dict, my_bookings: dict) -> str:
             unique_evs.sort(key=lambda x: x["start"])
 
             for ev in unique_evs:
-                rooms = list(ev["rooms"])
-                for mirror in my_bookings.get(ev["id"], []):
+                my_mirrors = my_bookings.get(ev["id"], [])
+                if not my_mirrors:
+                    continue
+                rooms: list[str] = []
+                for mirror in my_mirrors:
                     room_name = (
                         mirror.get("extendedProperties", {})
                         .get("private", {})
