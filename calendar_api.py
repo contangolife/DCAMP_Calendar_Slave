@@ -805,41 +805,35 @@ def build_sms(date_str: str, team_events: dict, my_bookings: dict) -> str:
     date = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=TZ)
     weekday = WEEKDAY_KO[date.weekday()]
 
-    lines = [f"💡 {date.month}/{date.day} {weekday}요일, 회의실 안내드립니다!"]
-    lines.append("")
+    lines = [f"💡 {date.month}/{date.day} {weekday}요일, 회의실 안내드립니다!", ""]
 
     for team in TEAM_ORDER:
         lines.append(f"□ {team}")
+        lines.append("")
 
         evs = team_events.get(team)
-        if not evs:
-            lines.append("")
-            continue
+        if evs:
+            seen: set = set()
+            unique_evs = [e for e in evs if not (e["id"] in seen or seen.add(e["id"]))]
+            unique_evs.sort(key=lambda x: x["start"])
 
-        seen: set = set()
-        unique_evs = [e for e in evs if not (e["id"] in seen or seen.add(e["id"]))]
-        unique_evs.sort(key=lambda x: x["start"])
+            for ev in unique_evs:
+                rooms = list(ev["rooms"])
+                for mirror in my_bookings.get(ev["id"], []):
+                    room_name = (
+                        mirror.get("extendedProperties", {})
+                        .get("private", {})
+                        .get("room_name")
+                    )
+                    if room_name and room_name not in rooms:
+                        rooms.append(room_name)
+                if not rooms:
+                    continue
+                room_str = " / ".join(rooms)
+                t = f"{ev['start'].strftime('%H:%M')}~{ev['end'].strftime('%H:%M')}"
+                lines.append(f"  [{room_str}] {t} {ev['title']}")
+                lines.append("")
 
-        has_entry = False
-        for ev in unique_evs:
-            rooms = list(ev["rooms"])
-            for mirror in my_bookings.get(ev["id"], []):
-                room_name = (
-                    mirror.get("extendedProperties", {})
-                    .get("private", {})
-                    .get("room_name")
-                )
-                if room_name and room_name not in rooms:
-                    rooms.append(room_name)
-            if not rooms:
-                continue
-            room_str = " / ".join(rooms)
-            t = f"{ev['start'].strftime('%H:%M')}~{ev['end'].strftime('%H:%M')}"
-            lines.append(f"  [{room_str}] {t} {ev['title']}")
-            has_entry = True
-
-        if not has_entry:
-            pass
         lines.append("")
 
     lines.append("추가 일정이나 변경 사항 있으시면 반영하겠습니다. 감사합니다.")

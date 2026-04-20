@@ -6,9 +6,11 @@
     streamlit run dashboard.py
 """
 import html
+import json
 from datetime import datetime, timedelta
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from config import ROOM_RESOURCES, TEAM_ORDER, TEAM_MAP, WEEKDAY_KO, TZ
 from calendar_api import (
@@ -488,7 +490,7 @@ for weekday_idx, (tab, day_label) in enumerate(zip(tabs[:-1], WEEKDAY_TAB_LABELS
                         c = st.columns([3, 1])
                         c[0].write(f"🏢 {mroom}")
                         if c[1].button(
-                            "✕ 취소",
+                            "✕",
                             key=f"cancel_one_{key_base}_{mid}",
                             type="secondary",
                             use_container_width=True,
@@ -599,9 +601,36 @@ with tabs[-1]:
             sms = build_sms(date_str, team_events_for_date, my_bookings)
             date = datetime.strptime(date_str, "%Y-%m-%d")
             weekday = WEEKDAY_KO[date.weekday()]
+
+            head_cols = st.columns([5, 1])
+            head_cols[0].markdown(
+                f"<h3 style='margin:0 0 4px 0;'>{date.month}/{date.day} ({weekday})</h3>",
+                unsafe_allow_html=True,
+            )
+            btn_id = f"copy-{date_str}"
+            safe_sms = json.dumps(sms)
+            with head_cols[1]:
+                components.html(
+                    f"""
+                    <div style="text-align:right;">
+                      <button id="{btn_id}"
+                        onclick="navigator.clipboard.writeText({safe_sms}).then(()=>{{
+                          const b=document.getElementById('{btn_id}');
+                          const o=b.innerText;
+                          b.innerText='✓ 복사됨';
+                          setTimeout(()=>b.innerText=o,1500);
+                        }});"
+                        style="padding:6px 14px;font-size:13px;border-radius:6px;
+                          border:1px solid #4b5563;background:#1f2937;color:#f3f4f6;
+                          cursor:pointer;">📋 복사</button>
+                    </div>
+                    """,
+                    height=44,
+                )
             st.text_area(
-                f"{date.month}/{date.day} ({weekday})",
+                "sms",
                 sms,
                 height=300,
                 key=f"sms_{date_str}_{hash(sms)}",
+                label_visibility="collapsed",
             )
