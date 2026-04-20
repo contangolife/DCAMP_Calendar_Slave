@@ -20,6 +20,8 @@ from calendar_api import (
     get_user_email,
     fetch_team_events,
     fetch_my_bookings,
+    fetch_room_busy_times,
+    available_rooms_at,
     classify_events,
     classify_events_per_person,
     build_email_to_name,
@@ -136,11 +138,13 @@ if cache_key not in st.session_state:
         by_date_team = classify_events(events, ROOM_RESOURCES, email_to_name)
         by_date_person = classify_events_per_person(events)
         my_bookings = fetch_my_bookings(service, week_offset)
+        room_busy = fetch_room_busy_times(service, week_offset, ROOM_RESOURCES)
         st.session_state[cache_key] = {
             "by_date_team":   by_date_team,
             "by_date_person": by_date_person,
             "email_to_name":  email_to_name,
             "my_bookings":    my_bookings,
+            "room_busy":      room_busy,
             "errors":         errors,
         }
 
@@ -149,6 +153,7 @@ by_date_team   = cache["by_date_team"]
 by_date_person = cache["by_date_person"]
 email_to_name  = cache["email_to_name"]
 my_bookings    = cache["my_bookings"]
+room_busy      = cache["room_busy"]
 errors         = cache["errors"]
 
 
@@ -461,49 +466,83 @@ for weekday_idx, (tab, day_label) in enumerate(zip(tabs[:-1], WEEKDAY_TAB_LABELS
                 for m in my_mirror_list
             ]
 
-            if has_original_room:
-                row[5].markdown(f"🏢 `{' / '.join(ev['rooms'])}` _(원본)_")
-            elif my_rooms:
-                row[5].markdown(f"✅ `{' / '.join(my_rooms)}` _(내 예약)_")
-            else:
-                row[5].markdown("🔴 **미배정**")
-
             key_base = f"all_{date_str}_{idx}_{ev['id']}"
 
             if has_original_room:
+                row[5].markdown(f"🏢 `{' / '.join(ev['rooms'])}` _(원본)_")
                 row[6].write("—")
                 row[7].write("—")
             elif my_rooms:
+                with row[5].popover(
+                    f"✅ {' / '.join(my_rooms)} ▾",
+                    use_container_width=True,
+                ):
+                    st.caption("내 예약 — 방별 취소")
+                    for mirror in my_mirror_list:
+                        mroom = (
+                            mirror.get("extendedProperties", {})
+                            .get("private", {})
+                            .get("room_name", "?")
+                        )
+                        mid = mirror["id"]
+                        c = st.columns([3, 1])
+                        c[0].write(f"🏢 {mroom}")
+                        if c[1].button(
+                            "✕ 취소",
+                            key=f"cancel_one_{key_base}_{mid}",
+                            type="secondary",
+                            use_container_width=True,
+                        ):
+                            with st.spinner("취소 중..."):
+                                result = cancel_booking(
+                                    service,
+                                    ev["id"],
+                                    week_offset,
+                                    mirror_event_ids={mid},
+                                )
+                            if result["status"] == "ok":
+                                st.success(result["message"])
+                            elif result["status"] == "partial":
+                                st.warning(result["message"])
+                            else:
+                                st.error(result["message"])
+                            deleted = set(result.get("deleted_mirror_ids", []))
+                            if deleted:
+                                if mroom in room_busy:
+                                    room_busy[mroom] = [
+                                        span for span in room_busy[mroom]
+                                        if span != (ev["start"], ev["end"])
+                                    ]
+                                remaining = [
+                                    m for m in my_bookings.get(ev["id"], [])
+                                    if m["id"] not in deleted
+                                ]
+                                if remaining:
+                                    my_bookings[ev["id"]] = remaining
+                                else:
+                                    my_bookings.pop(ev["id"], None)
+                            st.rerun()
                 row[6].write("—")
-                if row[7].button("취소", key=f"cancel_{key_base}", type="secondary"):
-                    with st.spinner("취소 중..."):
-                        result = cancel_booking(service, ev["id"], week_offset)
-                    if result["status"] == "ok":
-                        st.success(result["message"])
-                    elif result["status"] == "partial":
-                        st.warning(result["message"])
-                    else:
-                        st.error(result["message"])
-                    # 캐시 패치 — 재조회 없이 삭제된 미러만 제거
-                    deleted = set(result.get("deleted_mirror_ids", []))
-                    if deleted:
-                        remaining = [
-                            m for m in my_bookings.get(ev["id"], [])
-                            if m["id"] not in deleted
-                        ]
-                        if remaining:
-                            my_bookings[ev["id"]] = remaining
-                        else:
-                            my_bookings.pop(ev["id"], None)
-                    st.rerun()
+                row[7].write("—")
             else:
-                row[6].multiselect(
-                    "회의실",
-                    sorted(ROOM_RESOURCES.keys()),
-                    key=f"sel_{key_base}",
-                    label_visibility="collapsed",
-                    placeholder="회의실 선택 (여러 개 가능)",
-                )
+                row[5].markdown("🔴 **미배정**")
+                available = available_rooms_at(room_busy, ev["start"], ev["end"])
+                total = len(ROOM_RESOURCES)
+                hidden = total - len(available)
+                if available:
+                    row[6].multiselect(
+                        "회의실",
+                        available,
+                        key=f"sel_{key_base}",
+                        label_visibility="collapsed",
+                        placeholder=(
+                            f"회의실 선택 (가능 {len(available)}개"
+                            + (f" · 예약중 {hidden}개 숨김" if hidden else "")
+                            + ")"
+                        ),
+                    )
+                else:
+                    row[6].markdown("_예약 가능한 회의실 없음_")
                 row[7].write("—")
 
         # 일괄 예약 처리 — 하나의 이벤트에 여러 회의실 선택 시 회의실 개수만큼 book_meeting 호출
@@ -536,6 +575,7 @@ for weekday_idx, (tab, day_label) in enumerate(zip(tabs[:-1], WEEKDAY_TAB_LABELS
                 # 캐시 패치 — 성공 건은 생성된 미러를 my_bookings에 바로 추가
                 if result["status"] == "ok" and result.get("event"):
                     my_bookings.setdefault(ev["id"], []).append(result["event"])
+                    room_busy.setdefault(room_choice, []).append((ev["start"], ev["end"]))
             progress.progress(1.0, text=f"완료: {len(pairs)}건 처리됨")
             progress.empty()
 

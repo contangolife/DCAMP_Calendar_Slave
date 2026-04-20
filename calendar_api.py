@@ -585,6 +585,68 @@ def is_room_available(service, room_cal_id: str, start: datetime, end: datetime)
         return True
 
 
+def fetch_room_busy_times(
+    service,
+    week_offset: int = 0,
+    room_resources: dict[str, str] | None = None,
+) -> dict[str, list[tuple[datetime, datetime]]]:
+    """
+    freebusy API로 모든 회의실의 예약된 시간대를 한 번에 조회.
+    Returns: {회의실_이름: [(busy_start, busy_end), ...]}
+    권한 없거나 에러 시 해당 회의실은 빈 리스트 → 예약 가능으로 취급 (insert 시점에 Google이 거부함)
+    """
+    from config import ROOM_RESOURCES
+    if room_resources is None:
+        room_resources = ROOM_RESOURCES
+
+    time_min, time_max = get_week_range(week_offset)
+    email_to_name = {email: name for name, email in room_resources.items()}
+    busy_map: dict[str, list[tuple[datetime, datetime]]] = {
+        name: [] for name in room_resources.keys()
+    }
+
+    try:
+        result = service.freebusy().query(body={
+            "timeMin": time_min.isoformat(),
+            "timeMax": time_max.isoformat(),
+            "items": [{"id": email} for email in room_resources.values()],
+        }).execute()
+    except Exception:
+        return busy_map
+
+    for email, info in (result.get("calendars") or {}).items():
+        name = email_to_name.get(email)
+        if not name:
+            continue
+        spans: list[tuple[datetime, datetime]] = []
+        for b in info.get("busy", []):
+            s, e = b.get("start"), b.get("end")
+            if not s or not e:
+                continue
+            try:
+                spans.append((
+                    datetime.fromisoformat(s.replace("Z", "+00:00")).astimezone(TZ),
+                    datetime.fromisoformat(e.replace("Z", "+00:00")).astimezone(TZ),
+                ))
+            except Exception:
+                continue
+        busy_map[name] = spans
+    return busy_map
+
+
+def available_rooms_at(
+    busy_map: dict[str, list[tuple[datetime, datetime]]],
+    start: datetime,
+    end: datetime,
+) -> list[str]:
+    """주어진 시간대 [start, end)에 비어있는 회의실 이름 리스트 (정렬)"""
+    result = []
+    for name, spans in busy_map.items():
+        if not any(bs < end and be > start for bs, be in spans):
+            result.append(name)
+    return sorted(result)
+
+
 # ─────────────────────────────────────────
 # 예약 / 취소
 # ─────────────────────────────────────────
@@ -661,10 +723,20 @@ def book_meeting(
         }
 
 
-def cancel_booking(service, original_event_id: str, week_offset: int = 0) -> dict:
-    """원본 id에 연결된 모든 미러 예약 이벤트 삭제 (마포/선릉 동시 잡은 경우 함께 취소)"""
+def cancel_booking(
+    service,
+    original_event_id: str,
+    week_offset: int = 0,
+    mirror_event_ids: set[str] | None = None,
+) -> dict:
+    """
+    원본 id에 연결된 미러 예약 이벤트 삭제.
+    mirror_event_ids 지정 시 해당 미러만 부분 취소, None이면 전체 취소.
+    """
     bookings = fetch_my_bookings(service, week_offset)
     mirrors = bookings.get(original_event_id, [])
+    if mirror_event_ids is not None:
+        mirrors = [m for m in mirrors if m["id"] in mirror_event_ids]
     if not mirrors:
         return {"status": "not_found", "message": "해당 예약을 찾을 수 없습니다."}
 
