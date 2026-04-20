@@ -6,7 +6,6 @@
     streamlit run dashboard.py
 """
 import html
-import json
 from datetime import datetime, timedelta
 
 import streamlit as st
@@ -487,13 +486,12 @@ for weekday_idx, (tab, day_label) in enumerate(zip(tabs[:-1], WEEKDAY_TAB_LABELS
                             .get("room_name", "?")
                         )
                         mid = mirror["id"]
-                        c = st.columns([3, 1])
+                        c = st.columns([5, 1])
                         c[0].write(f"🏢 {mroom}")
                         if c[1].button(
                             "✕",
                             key=f"cancel_one_{key_base}_{mid}",
                             type="secondary",
-                            use_container_width=True,
                         ):
                             with st.spinner("취소 중..."):
                                 result = cancel_booking(
@@ -608,21 +606,25 @@ with tabs[-1]:
                 unsafe_allow_html=True,
             )
             btn_id = f"copy-{date_str}"
-            safe_sms = json.dumps(sms)
+            data_id = f"data-{date_str}"
+            sms_escaped = html.escape(sms)
             with head_cols[1]:
                 components.html(
                     f"""
+                    <textarea id="{data_id}" style="display:none;">{sms_escaped}</textarea>
                     <div style="text-align:right;">
                       <button id="{btn_id}"
-                        onclick="navigator.clipboard.writeText({safe_sms}).then(()=>{{
-                          const b=document.getElementById('{btn_id}');
-                          const o=b.innerText;
-                          b.innerText='✓ 복사됨';
-                          setTimeout(()=>b.innerText=o,1500);
-                        }});"
+                        onclick="
+                          var t=document.getElementById('{data_id}').value;
+                          navigator.clipboard.writeText(t).then(function(){{
+                            var b=document.getElementById('{btn_id}');
+                            var o=b.innerText;
+                            b.innerText='\u2713 \ubcf5\uc0ac\ub428';
+                            setTimeout(function(){{b.innerText=o;}},1500);
+                          }});"
                         style="padding:6px 14px;font-size:13px;border-radius:6px;
                           border:1px solid #4b5563;background:#1f2937;color:#f3f4f6;
-                          cursor:pointer;">📋 복사</button>
+                          cursor:pointer;">\U0001f4cb \ubcf5\uc0ac</button>
                     </div>
                     """,
                     height=44,
