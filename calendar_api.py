@@ -654,8 +654,10 @@ def book_meeting(
     내 캘린더에 미러 이벤트 생성 + 회의실만 초대
     Returns: {"status": "ok"|"duplicate"|"conflict"|"error", "event_id": ..., "message": ...}
     """
-    # 1. 중복 체크 — 같은 회의실로 이미 예약됐는지 (다른 회의실 병행은 허용)
+    # 1. 중복 및 배치 내 충돌 체크 — BOOKING_CALENDAR 조회 (읽기-쓰기 일관성 ↑)
     existing = fetch_my_bookings(service, _week_offset_for_date(entry["start"]))
+
+    # 1a. 같은 원본 이벤트에 같은 방 — 중복
     for mirror in existing.get(entry["id"], []):
         m_room = (
             mirror.get("extendedProperties", {})
@@ -669,7 +671,35 @@ def book_meeting(
                 "message": f"{room_name}은(는) 이미 예약되어 있습니다.",
             }
 
-    # 2. 회의실 가용성 체크
+    # 1b. 다른 원본이라도 같은 방 + 시간 겹침 — 충돌
+    # (회의실 캘린더 반영 전에 같은 배치에서 연달아 예약한 경우를 잡기 위함)
+    for mirrors in existing.values():
+        for mirror in mirrors:
+            if (
+                mirror.get("extendedProperties", {})
+                .get("private", {})
+                .get("room_name")
+                != room_name
+            ):
+                continue
+            s_raw = mirror.get("start", {}).get("dateTime")
+            e_raw = mirror.get("end", {}).get("dateTime")
+            if not s_raw or not e_raw:
+                continue
+            m_start = datetime.fromisoformat(s_raw).astimezone(TZ)
+            m_end = datetime.fromisoformat(e_raw).astimezone(TZ)
+            if m_start < entry["end"] and m_end > entry["start"]:
+                return {
+                    "status": "conflict",
+                    "event_id": None,
+                    "message": (
+                        f"{room_name}이(가) "
+                        f"{m_start.strftime('%H:%M')}~{m_end.strftime('%H:%M')}에 "
+                        f"이미 대시보드 예약되어 있습니다."
+                    ),
+                }
+
+    # 2. 회의실 캘린더 가용성 체크 (다른 사용자/외부 예약 대비)
     if not is_room_available(service, room_resource_email, entry["start"], entry["end"]):
         return {
             "status": "conflict",
