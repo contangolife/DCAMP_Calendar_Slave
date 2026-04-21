@@ -273,11 +273,19 @@ def extract_attendee_names(event: dict, email_to_name: dict | None = None) -> li
 
 
 def get_booked_rooms(event: dict, room_resources: dict) -> list[str]:
-    """이벤트에 이미 예약된 회의실 이름 목록"""
+    """
+    이벤트에 실제로 예약된 회의실 이름 목록.
+    - declined된 회의실은 제외 (Google이 busy라서 자동 거절한 경우)
+    - location 텍스트 fallback은 회의실 resource가 아예 안 붙은 이벤트에만 적용
+    """
     rooms = []
+    had_any_resource = False
     for att in event.get("attendees", []):
         email = att.get("email", "")
         if "@resource.calendar.google.com" not in email:
+            continue
+        had_any_resource = True
+        if att.get("responseStatus") == "declined":
             continue
         matched = next((name for name, rid in room_resources.items() if rid == email), None)
         if matched:
@@ -286,8 +294,8 @@ def get_booked_rooms(event: dict, room_resources: dict) -> list[str]:
             display = att.get("displayName", "")
             if display:
                 rooms.append(clean_room_name(display))
-    # location fallback — 회의실 패턴만 허용 (주소/Teams 링크 배제)
-    if not rooms:
+    # location fallback — attendee로 회의실이 전혀 안 붙은 경우에만
+    if not rooms and not had_any_resource:
         location = event.get("location", "")
         if location:
             cleaned = clean_room_name(location)
