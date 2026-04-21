@@ -352,13 +352,28 @@ if errors:
 # 메인 테이블 (요일별 탭)
 # ─────────────────────────────────────────
 WEEKDAY_TAB_LABELS = ["월", "화", "수", "목", "금"]
-tabs = st.tabs(WEEKDAY_TAB_LABELS + ["📋 문자 생성"])
+DAY_OPTIONS = WEEKDAY_TAB_LABELS + ["📋 문자 생성"]
+
+active_day = st.radio(
+    "요일",
+    DAY_OPTIONS,
+    horizontal=True,
+    key="active_day_tab",
+    label_visibility="collapsed",
+)
 
 COL_WIDTHS = [1.4, 1.3, 2.8, 1.2, 2.0, 1.8, 1.6]
 
 monday, _ = get_week_range(week_offset)
 
-for weekday_idx, (tab, day_label) in enumerate(zip(tabs[:-1], WEEKDAY_TAB_LABELS)):
+# 선택된 요일만 렌더 — (st.tabs는 첫 rerun 때 월요일로 리셋되는 이슈가 있어 radio로 대체)
+if active_day in WEEKDAY_TAB_LABELS:
+    _selected_idx = WEEKDAY_TAB_LABELS.index(active_day)
+    _tab_iter = [(_selected_idx, (st.container(), active_day))]
+else:
+    _tab_iter = []
+
+for weekday_idx, (tab, day_label) in _tab_iter:
     date = monday + timedelta(days=weekday_idx)
     date_str = date.strftime("%Y-%m-%d")
 
@@ -606,7 +621,7 @@ for weekday_idx, (tab, day_label) in enumerate(zip(tabs[:-1], WEEKDAY_TAB_LABELS
 # ─────────────────────────────────────────
 # 문자 생성 탭
 # ─────────────────────────────────────────
-with tabs[-1]:
+if active_day == "📋 문자 생성":
     st.markdown("### 📋 안내 문자")
     st.caption("각 박스의 내용을 복사하세요.")
 
