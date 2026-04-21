@@ -20,6 +20,13 @@ TOKEN_FILE = BASE_DIR / "token.json"
 # 이 태그를 통해 내 캘린더의 일반 이벤트와 구분함
 BOOKING_TAG = "dashboard_v1"
 
+# 모든 운영자가 공유하는 "미러 예약 전용" 캘린더.
+# 개인 primary 대신 여기에 이벤트를 생성/조회해서 운영자가 바뀌어도 상태가 유지됨.
+BOOKING_CALENDAR_ID = (
+    "c_966f99944c3407ebbad59fcc91c00f9f0e002a3715b4e0049923e8c313392c2f"
+    "@group.calendar.google.com"
+)
+
 # ─────────────────────────────────────────
 # 시간/요일
 # ─────────────────────────────────────────
@@ -33,6 +40,7 @@ TEAM_ORDER = ["투자전략팀", "펀드팀", "투자팀"]
 
 TEAM_MAP: dict[str, str] = {
     # 투자전략팀
+    "seokjoo@dcamp.kr":     "투자전략팀",
     "hanui@dcamp.kr":       "투자전략팀",
     "hyohyun@dcamp.kr":     "투자전략팀",
     "juheum@dcamp.kr":      "투자전략팀",

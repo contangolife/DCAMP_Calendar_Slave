@@ -301,8 +301,11 @@ def _is_all_day(event: dict) -> bool:
 
 def render_team_strip(date_str: str) -> None:
     day_map = by_date_person.get(date_str, {})
+    current_user = (st.session_state.get("user_email") or "").strip().lower()
     cards: list[str] = []
     for email, team in TEAM_MAP.items():
+        if current_user and email.strip().lower() == current_user:
+            continue
         name = email_to_name.get(email, email.split("@")[0])
         evs = day_map.get(email, [])
 

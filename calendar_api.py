@@ -19,7 +19,7 @@ from google.auth.exceptions import RefreshError
 from googleapiclient.discovery import build
 
 from config import (
-    SCOPES, CREDENTIALS_FILE, TOKEN_FILE, BOOKING_TAG,
+    SCOPES, CREDENTIALS_FILE, TOKEN_FILE, BOOKING_TAG, BOOKING_CALENDAR_ID,
     TZ, WEEKDAY_KO, TEAM_MAP, TEAM_ORDER,
 )
 
@@ -543,7 +543,7 @@ def fetch_my_bookings(service, week_offset: int = 0) -> dict[str, list[dict]]:
     page_token = None
     while True:
         result = service.events().list(
-            calendarId="primary",
+            calendarId=BOOKING_CALENDAR_ID,
             timeMin=time_min.isoformat(),
             timeMax=time_max.isoformat(),
             singleEvents=True,
@@ -704,7 +704,7 @@ def book_meeting(
     }
     try:
         created = service.events().insert(
-            calendarId="primary",
+            calendarId=BOOKING_CALENDAR_ID,
             body=body,
             sendUpdates="none",
         ).execute()
@@ -751,7 +751,7 @@ def cancel_booking(
         )
         try:
             service.events().delete(
-                calendarId="primary",
+                calendarId=BOOKING_CALENDAR_ID,
                 eventId=mirror["id"],
                 sendUpdates="none",
             ).execute()
