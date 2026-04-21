@@ -237,8 +237,6 @@ def parse_event_time(event: dict) -> tuple[datetime | None, datetime | None]:
 # 회의실 이름 파싱
 # ─────────────────────────────────────────
 
-ROOM_NAME_PATTERN = re.compile(r"^(선릉|마포)\s*\d+[-][A-Za-z]$")
-
 def clean_room_name(raw: str) -> str:
     """'Taap-선릉-4-4-B (6)' → '선릉 4-B'"""
     m = re.search(r"Taap[-_]?(선릉|마포)[-_](\d+)[-_]\d+[-_]([A-Za-z])", raw, re.IGNORECASE)
@@ -248,10 +246,6 @@ def clean_room_name(raw: str) -> str:
     if m2:
         return f"{m2.group(1)} {m2.group(2)}"
     return raw.strip()
-
-
-def is_valid_room_name(name: str) -> bool:
-    return bool(ROOM_NAME_PATTERN.match(name))
 
 
 def extract_attendee_names(event: dict, email_to_name: dict | None = None) -> list[str]:
@@ -275,16 +269,14 @@ def extract_attendee_names(event: dict, email_to_name: dict | None = None) -> li
 def get_booked_rooms(event: dict, room_resources: dict) -> list[str]:
     """
     이벤트에 실제로 예약된 회의실 이름 목록.
+    - 회의실 리소스 attendee만 신뢰 (location 텍스트는 오타/장식용이라 무시)
     - declined된 회의실은 제외 (Google이 busy라서 자동 거절한 경우)
-    - location 텍스트 fallback은 회의실 resource가 아예 안 붙은 이벤트에만 적용
     """
     rooms = []
-    had_any_resource = False
     for att in event.get("attendees", []):
         email = att.get("email", "")
         if "@resource.calendar.google.com" not in email:
             continue
-        had_any_resource = True
         if att.get("responseStatus") == "declined":
             continue
         matched = next((name for name, rid in room_resources.items() if rid == email), None)
@@ -294,13 +286,6 @@ def get_booked_rooms(event: dict, room_resources: dict) -> list[str]:
             display = att.get("displayName", "")
             if display:
                 rooms.append(clean_room_name(display))
-    # location fallback — attendee로 회의실이 전혀 안 붙은 경우에만
-    if not rooms and not had_any_resource:
-        location = event.get("location", "")
-        if location:
-            cleaned = clean_room_name(location)
-            if is_valid_room_name(cleaned):
-                rooms.append(cleaned)
     return rooms
 
 
