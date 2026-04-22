@@ -409,6 +409,12 @@ for weekday_idx, (tab, day_label) in _tab_iter:
             sel_key = f"sel_all_{date_str}_{idx}_{ev['id']}"
             unassigned.append((idx, ev, sel_key))
 
+        # 아직 예약 전이지만 다른 이벤트 드롭다운에서 이미 선택된 방들 — 겹치는 시간대의 드롭다운에서 제외
+        tentative_bookings: list[tuple] = []
+        for _, t_ev, t_key in unassigned:
+            for t_room in st.session_state.get(t_key, []):
+                tentative_bookings.append((t_ev["start"], t_ev["end"], t_room, t_key))
+
         selected_rooms_count = sum(
             len(st.session_state.get(k, [])) for _, _, k in unassigned
         )
@@ -562,17 +568,27 @@ for weekday_idx, (tab, day_label) in _tab_iter:
                 row[6].write("—")
             else:
                 row[5].markdown("🔴 **미배정**")
-                available = available_rooms_at(room_busy, ev["start"], ev["end"])
+                my_sel_key = f"sel_{key_base}"
+                available_set = set(available_rooms_at(room_busy, ev["start"], ev["end"]))
+                # 다른 이벤트에서 이미 선택된 방이 시간 겹치면 제외 (같은 배치 내 중복 방지)
+                for t_start, t_end, t_room, t_key in tentative_bookings:
+                    if t_key == my_sel_key:
+                        continue
+                    if t_start < ev["end"] and t_end > ev["start"]:
+                        available_set.discard(t_room)
+                # 내가 이미 선택한 방은 옵션에 항상 포함 (multiselect 값 유지)
+                my_current = set(st.session_state.get(my_sel_key, []))
+                options = sorted(available_set | my_current)
                 total = len(ROOM_RESOURCES)
-                hidden = total - len(available)
-                if available:
+                hidden = total - len(options)
+                if options:
                     row[6].multiselect(
                         "회의실",
-                        available,
-                        key=f"sel_{key_base}",
+                        options,
+                        key=my_sel_key,
                         label_visibility="collapsed",
                         placeholder=(
-                            f"회의실 선택 (가능 {len(available)}개"
+                            f"회의실 선택 (가능 {len(options)}개"
                             + (f" · 예약중 {hidden}개 숨김" if hidden else "")
                             + ")"
                         ),

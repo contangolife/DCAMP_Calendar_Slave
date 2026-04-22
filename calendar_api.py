@@ -313,6 +313,14 @@ def fetch_team_events(service, week_offset: int = 0) -> tuple[list, list[str]]:
                     pageToken=page_token,
                 ).execute()
                 for ev in result.get("items", []):
+                    # 대시보드가 만든 미러 이벤트는 제외 (본인 로그인 시 자기 primary 캘린더에서 노출 방지)
+                    if (
+                        ev.get("extendedProperties", {})
+                        .get("private", {})
+                        .get("booked_by_script")
+                        == BOOKING_TAG
+                    ):
+                        continue
                     eid = ev.get("id", "")
                     if eid not in event_map:
                         event_map[eid] = ev
