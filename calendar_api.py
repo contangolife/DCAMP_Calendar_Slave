@@ -19,7 +19,7 @@ from google.auth.exceptions import RefreshError
 from googleapiclient.discovery import build
 
 from config import (
-    SCOPES, CREDENTIALS_FILE, TOKEN_FILE, BOOKING_TAG, BOOKING_CALENDAR_ID,
+    SCOPES, CREDENTIALS_FILE, TOKEN_FILE, BOOKING_TAG,
     TZ, WEEKDAY_KO, TEAM_MAP, TEAM_ORDER,
 )
 
@@ -536,7 +536,7 @@ def fetch_my_bookings(service, week_offset: int = 0) -> dict[str, list[dict]]:
     page_token = None
     while True:
         result = service.events().list(
-            calendarId=BOOKING_CALENDAR_ID,
+            calendarId="primary",
             timeMin=time_min.isoformat(),
             timeMax=time_max.isoformat(),
             singleEvents=True,
@@ -546,8 +546,18 @@ def fetch_my_bookings(service, week_offset: int = 0) -> dict[str, list[dict]]:
         for ev in result.get("items", []):
             props = ev.get("extendedProperties", {}).get("private", {})
             original_id = props.get("original_event_id")
-            if original_id:
-                bookings[original_id].append(ev)
+            if not original_id:
+                continue
+            # 회의실이 거절한 미러는 실제로 예약되지 않은 상태 (Taap/리소스가 예약 실패로 응답)
+            # declined는 스킵, 그 외(accepted/needsAction/tentative)는 유효한 예약으로 포함
+            room_declined = any(
+                "@resource.calendar.google.com" in att.get("email", "")
+                and att.get("responseStatus") == "declined"
+                for att in ev.get("attendees", [])
+            )
+            if room_declined:
+                continue
+            bookings[original_id].append(ev)
         page_token = result.get("nextPageToken")
         if not page_token:
             break
@@ -727,7 +737,7 @@ def book_meeting(
     }
     try:
         created = service.events().insert(
-            calendarId=BOOKING_CALENDAR_ID,
+            calendarId="primary",
             body=body,
             sendUpdates="none",
         ).execute()
@@ -774,7 +784,7 @@ def cancel_booking(
         )
         try:
             service.events().delete(
-                calendarId=BOOKING_CALENDAR_ID,
+                calendarId="primary",
                 eventId=mirror["id"],
                 sendUpdates="none",
             ).execute()
