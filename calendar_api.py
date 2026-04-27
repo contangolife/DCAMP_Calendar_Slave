@@ -731,7 +731,6 @@ def book_meeting(
         "start":   {"dateTime": entry["start"].isoformat(), "timeZone": "Asia/Seoul"},
         "end":     {"dateTime": entry["end"].isoformat(),   "timeZone": "Asia/Seoul"},
         "attendees": [{"email": room_resource_email, "displayName": room_name}],
-        "visibility": "private",
         "reminders": {"useDefault": False},
         "description": f"원본 이벤트 대리 예약\n원본 ID: {entry['id']}\n원본 주최자: {entry.get('organizer', '')}",
         "extendedProperties": {
