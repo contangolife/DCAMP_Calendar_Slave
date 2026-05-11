@@ -511,11 +511,22 @@ for weekday_idx, (tab, day_label) in _tab_iter:
                 row[5].markdown(f"🏢 `{' / '.join(ev['rooms'])}` _(원본)_")
                 row[6].write("—")
             elif my_rooms:
-                with row[5].popover(
-                    f"✅ {' / '.join(my_rooms)} ▾",
-                    use_container_width=True,
-                ):
-                    st.caption("내 예약")
+                # 시간 불일치 여부를 먼저 계산해서 트리거에 ⚠️ 노출
+                _any_mismatch = False
+                for _m in my_mirror_list:
+                    _ms = _m.get("start", {}).get("dateTime")
+                    _me = _m.get("end", {}).get("dateTime")
+                    if _ms and _me:
+                        try:
+                            if (datetime.fromisoformat(_ms).astimezone(TZ) != ev["start"]
+                                or datetime.fromisoformat(_me).astimezone(TZ) != ev["end"]):
+                                _any_mismatch = True
+                                break
+                        except Exception:
+                            pass
+                trigger_label = f"{'⚠️ ' if _any_mismatch else '✅ '}{' / '.join(my_rooms)} ▾"
+                with row[5].popover(trigger_label, use_container_width=True):
+                    st.caption("내 예약 — 시간 불일치 시 🔁 동기화")
                     for mirror in my_mirror_list:
                         mroom = (
                             mirror.get("extendedProperties", {})
@@ -523,13 +534,74 @@ for weekday_idx, (tab, day_label) in _tab_iter:
                             .get("room_name", "?")
                         )
                         mid = mirror["id"]
-                        c = st.columns([5, 1])
-                        c[0].write(f"🏢 {mroom}")
-                        if c[1].button(
-                            "✕",
-                            key=f"cancel_one_{key_base}_{mid}",
-                            type="secondary",
-                        ):
+
+                        # 미러 시간 vs 원본 시간 비교
+                        m_start_raw = mirror.get("start", {}).get("dateTime")
+                        m_end_raw = mirror.get("end", {}).get("dateTime")
+                        time_mismatch = False
+                        m_start = m_end = None
+                        if m_start_raw and m_end_raw:
+                            try:
+                                m_start = datetime.fromisoformat(m_start_raw).astimezone(TZ)
+                                m_end = datetime.fromisoformat(m_end_raw).astimezone(TZ)
+                                time_mismatch = (
+                                    m_start != ev["start"] or m_end != ev["end"]
+                                )
+                            except Exception:
+                                pass
+
+                        if time_mismatch:
+                            c = st.columns([2, 3, 1, 1])
+                            c[0].write(f"🏢 {mroom}")
+                            c[1].markdown(
+                                f"⚠️ {m_start.strftime('%H:%M')}~{m_end.strftime('%H:%M')} → "
+                                f"**{ev['start'].strftime('%H:%M')}~{ev['end'].strftime('%H:%M')}**"
+                            )
+                            sync_btn = c[2].button(
+                                "🔁",
+                                key=f"sync_{key_base}_{mid}",
+                                help="원본 시간으로 재예약",
+                            )
+                            cancel_btn = c[3].button(
+                                "✕",
+                                key=f"cancel_one_{key_base}_{mid}",
+                                type="secondary",
+                            )
+                        else:
+                            c = st.columns([5, 1])
+                            c[0].write(f"🏢 {mroom}")
+                            sync_btn = False
+                            cancel_btn = c[1].button(
+                                "✕",
+                                key=f"cancel_one_{key_base}_{mid}",
+                                type="secondary",
+                            )
+
+                        if sync_btn:
+                            with st.spinner("동기화 중..."):
+                                cres = cancel_booking(
+                                    service,
+                                    ev["id"],
+                                    week_offset,
+                                    mirror_event_ids={mid},
+                                )
+                                if cres["status"] in ("ok", "not_found", "partial"):
+                                    bres = book_meeting(
+                                        service,
+                                        ev,
+                                        ROOM_RESOURCES[mroom],
+                                        mroom,
+                                    )
+                                    if bres["status"] == "ok":
+                                        st.success(f"{mroom} 동기화 완료")
+                                    else:
+                                        st.error(f"재예약 실패: {bres['message']}")
+                                else:
+                                    st.error(f"기존 미러 취소 실패: {cres['message']}")
+                            invalidate_cache()
+                            st.rerun()
+
+                        if cancel_btn:
                             with st.spinner("취소 중..."):
                                 result = cancel_booking(
                                     service,
