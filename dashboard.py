@@ -349,6 +349,81 @@ if errors:
             st.text(e)
 
 # ─────────────────────────────────────────
+# 고아 예약 — 원본 회의가 사라진 미러 (취소 누락 방지)
+# ─────────────────────────────────────────
+_all_week_event_ids: set[str] = set()
+for _date_evs in by_date_team.values():
+    for _team_evs in _date_evs.values():
+        for _ev in _team_evs:
+            _all_week_event_ids.add(_ev["id"])
+
+_orphan_mirrors: list[tuple[str, dict]] = []
+for _orig_id, _mirrors in my_bookings.items():
+    if _orig_id in _all_week_event_ids:
+        continue
+    for _m in _mirrors:
+        _orphan_mirrors.append((_orig_id, _m))
+
+if _orphan_mirrors:
+    with st.expander(
+        f"⚠️ 원본 회의가 없는 예약 {len(_orphan_mirrors)}건 — 삭제됐거나 다른 주차로 이동한 회의",
+        expanded=True,
+    ):
+        for _orig_id, _m in _orphan_mirrors:
+            _mroom = (
+                _m.get("extendedProperties", {})
+                .get("private", {})
+                .get("room_name", "?")
+            )
+            _mtitle = (
+                _m.get("extendedProperties", {})
+                .get("private", {})
+                .get("original_title", _m.get("summary", "(제목 없음)"))
+            )
+            _ms_raw = _m.get("start", {}).get("dateTime")
+            _me_raw = _m.get("end", {}).get("dateTime")
+            try:
+                _ms = datetime.fromisoformat(_ms_raw).astimezone(TZ)
+                _me = datetime.fromisoformat(_me_raw).astimezone(TZ)
+                _time_str = (
+                    f"{_ms.strftime('%m/%d %H:%M')}~{_me.strftime('%H:%M')}"
+                )
+            except Exception:
+                _time_str = "(시간 정보 없음)"
+            _mid = _m["id"]
+            oc = st.columns([3, 2, 4, 1])
+            oc[0].markdown(f"🏢 **{_mroom}**")
+            oc[1].write(_time_str)
+            oc[2].write(_mtitle)
+            if oc[3].button("✕ 취소", key=f"orphan_cancel_{_mid}", type="secondary"):
+                with st.spinner("취소 중..."):
+                    _res = cancel_booking(
+                        service,
+                        _orig_id,
+                        week_offset,
+                        mirror_event_ids={_mid},
+                    )
+                _status = _res["status"]
+                if _status in ("ok", "not_found"):
+                    st.success("취소됨")
+                else:
+                    st.error(_res["message"])
+                # 캐시 in-place 정리
+                _deleted = set(_res.get("deleted_mirror_ids", []))
+                if _status == "not_found":
+                    _deleted = {_mid}
+                if _deleted:
+                    _remaining = [
+                        m for m in my_bookings.get(_orig_id, [])
+                        if m["id"] not in _deleted
+                    ]
+                    if _remaining:
+                        my_bookings[_orig_id] = _remaining
+                    else:
+                        my_bookings.pop(_orig_id, None)
+                st.rerun()
+
+# ─────────────────────────────────────────
 # 메인 테이블 (요일별 탭)
 # ─────────────────────────────────────────
 WEEKDAY_TAB_LABELS = ["월", "화", "수", "목", "금"]
