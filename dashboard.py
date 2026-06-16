@@ -135,7 +135,7 @@ if refresh and cache_key in st.session_state:
 if cache_key not in st.session_state:
     with st.spinner("일정 조회 중..."):
         events, errors = fetch_team_events(service, week_offset)
-        email_to_name = build_email_to_name(events, service)
+        email_to_name = build_email_to_name(service)
         by_date_team = classify_events(events, ROOM_RESOURCES, email_to_name)
         by_date_person = classify_events_per_person(events)
         my_bookings = fetch_my_bookings(service, week_offset)
@@ -158,10 +158,41 @@ room_busy      = cache["room_busy"]
 errors         = cache["errors"]
 
 
-def invalidate_cache():
-    """예약/취소 후 캐시 갱신"""
-    if cache_key in st.session_state:
-        del st.session_state[cache_key]
+def _cancel_mirror(orig_id: str, mid: str, mroom: str, span: tuple | None) -> dict:
+    """미러 하나 취소 + my_bookings/room_busy in-place 패치.
+
+    span: (start, end) — room_busy에서 제거할 시간대. 고아 미러는 None.
+    """
+    result = cancel_booking(service, orig_id, week_offset, mirror_event_ids={mid})
+    deleted = set(result.get("deleted_mirror_ids", []))
+    if result["status"] == "not_found":
+        deleted = {mid}
+    if deleted:
+        if span and mroom in room_busy:
+            room_busy[mroom] = [s for s in room_busy[mroom] if s != span]
+        remaining = [m for m in my_bookings.get(orig_id, []) if m["id"] not in deleted]
+        if remaining:
+            my_bookings[orig_id] = remaining
+        else:
+            my_bookings.pop(orig_id, None)
+    return result
+
+
+def _mirror_time_info(mirror: dict, ev_start, ev_end):
+    """미러의 시작/끝 datetime + 원본 시간과 불일치 여부.
+
+    Returns: (m_start, m_end, time_mismatch) — 파싱 실패 시 (None, None, False).
+    """
+    raw_s = mirror.get("start", {}).get("dateTime")
+    raw_e = mirror.get("end", {}).get("dateTime")
+    if not (raw_s and raw_e):
+        return None, None, False
+    try:
+        ms = datetime.fromisoformat(raw_s).astimezone(TZ)
+        me = datetime.fromisoformat(raw_e).astimezone(TZ)
+        return ms, me, (ms != ev_start or me != ev_end)
+    except Exception:
+        return None, None, False
 
 
 def _safe_esc(text: str) -> str:
@@ -338,11 +369,6 @@ def render_team_strip(date_str: str) -> None:
 # ─────────────────────────────────────────
 # 오류 표시
 # ─────────────────────────────────────────
-# 임시 디버그: People API 상태
-_people_debug = email_to_name.pop("_debug_people_api", "")
-if _people_debug:
-    st.caption(f"[디버그] {_people_debug}")
-
 if errors:
     with st.expander(f"⚠️ 조회 오류 {len(errors)}건"):
         for e in errors:
@@ -397,30 +423,11 @@ if _orphan_mirrors:
             oc[2].write(_mtitle)
             if oc[3].button("✕ 취소", key=f"orphan_cancel_{_mid}", type="secondary"):
                 with st.spinner("취소 중..."):
-                    _res = cancel_booking(
-                        service,
-                        _orig_id,
-                        week_offset,
-                        mirror_event_ids={_mid},
-                    )
-                _status = _res["status"]
-                if _status in ("ok", "not_found"):
+                    _res = _cancel_mirror(_orig_id, _mid, _mroom, span=None)
+                if _res["status"] in ("ok", "not_found"):
                     st.success("취소됨")
                 else:
                     st.error(_res["message"])
-                # 캐시 in-place 정리
-                _deleted = set(_res.get("deleted_mirror_ids", []))
-                if _status == "not_found":
-                    _deleted = {_mid}
-                if _deleted:
-                    _remaining = [
-                        m for m in my_bookings.get(_orig_id, [])
-                        if m["id"] not in _deleted
-                    ]
-                    if _remaining:
-                        my_bookings[_orig_id] = _remaining
-                    else:
-                        my_bookings.pop(_orig_id, None)
                 st.rerun()
 
 # ─────────────────────────────────────────
@@ -586,44 +593,22 @@ for weekday_idx, (tab, day_label) in _tab_iter:
                 row[5].markdown(f"🏢 `{' / '.join(ev['rooms'])}` _(원본)_")
                 row[6].write("—")
             elif my_rooms:
-                # 시간 불일치 여부를 먼저 계산해서 트리거에 ⚠️ 노출
-                _any_mismatch = False
-                for _m in my_mirror_list:
-                    _ms = _m.get("start", {}).get("dateTime")
-                    _me = _m.get("end", {}).get("dateTime")
-                    if _ms and _me:
-                        try:
-                            if (datetime.fromisoformat(_ms).astimezone(TZ) != ev["start"]
-                                or datetime.fromisoformat(_me).astimezone(TZ) != ev["end"]):
-                                _any_mismatch = True
-                                break
-                        except Exception:
-                            pass
-                trigger_label = f"{'⚠️ ' if _any_mismatch else '✅ '}{' / '.join(my_rooms)} ▾"
+                # 미러별 시간 정보 + 불일치 여부를 한 번만 계산
+                mirror_infos = [
+                    (m, *_mirror_time_info(m, ev["start"], ev["end"]))
+                    for m in my_mirror_list
+                ]
+                any_mismatch = any(mm for _, _, _, mm in mirror_infos)
+                trigger_label = f"{'⚠️ ' if any_mismatch else '✅ '}{' / '.join(my_rooms)} ▾"
                 with row[5].popover(trigger_label, use_container_width=True):
                     st.caption("내 예약 — 시간 불일치 시 🔁 동기화")
-                    for mirror in my_mirror_list:
+                    for mirror, m_start, m_end, time_mismatch in mirror_infos:
                         mroom = (
                             mirror.get("extendedProperties", {})
                             .get("private", {})
                             .get("room_name", "?")
                         )
                         mid = mirror["id"]
-
-                        # 미러 시간 vs 원본 시간 비교
-                        m_start_raw = mirror.get("start", {}).get("dateTime")
-                        m_end_raw = mirror.get("end", {}).get("dateTime")
-                        time_mismatch = False
-                        m_start = m_end = None
-                        if m_start_raw and m_end_raw:
-                            try:
-                                m_start = datetime.fromisoformat(m_start_raw).astimezone(TZ)
-                                m_end = datetime.fromisoformat(m_end_raw).astimezone(TZ)
-                                time_mismatch = (
-                                    m_start != ev["start"] or m_end != ev["end"]
-                                )
-                            except Exception:
-                                pass
 
                         if time_mismatch:
                             c = st.columns([2, 3, 1, 1])
@@ -653,13 +638,9 @@ for weekday_idx, (tab, day_label) in _tab_iter:
                             )
 
                         if sync_btn:
+                            old_span = (m_start, m_end) if m_start and m_end else None
                             with st.spinner("동기화 중..."):
-                                cres = cancel_booking(
-                                    service,
-                                    ev["id"],
-                                    week_offset,
-                                    mirror_event_ids={mid},
-                                )
+                                cres = _cancel_mirror(ev["id"], mid, mroom, span=old_span)
                                 if cres["status"] in ("ok", "not_found", "partial"):
                                     bres = book_meeting(
                                         service,
@@ -669,20 +650,19 @@ for weekday_idx, (tab, day_label) in _tab_iter:
                                     )
                                     if bres["status"] == "ok":
                                         st.success(f"{mroom} 동기화 완료")
+                                        if bres.get("event"):
+                                            my_bookings.setdefault(ev["id"], []).append(bres["event"])
+                                            room_busy.setdefault(mroom, []).append((ev["start"], ev["end"]))
                                     else:
                                         st.error(f"재예약 실패: {bres['message']}")
                                 else:
                                     st.error(f"기존 미러 취소 실패: {cres['message']}")
-                            invalidate_cache()
                             st.rerun()
 
                         if cancel_btn:
                             with st.spinner("취소 중..."):
-                                result = cancel_booking(
-                                    service,
-                                    ev["id"],
-                                    week_offset,
-                                    mirror_event_ids={mid},
+                                result = _cancel_mirror(
+                                    ev["id"], mid, mroom, span=(ev["start"], ev["end"])
                                 )
                             status = result["status"]
                             if status == "ok":
@@ -693,24 +673,6 @@ for weekday_idx, (tab, day_label) in _tab_iter:
                                 st.info("이미 취소된 예약입니다. 목록에서 제거합니다.")
                             else:
                                 st.error(result["message"])
-                            # 로컬 캐시 정리: not_found도 UI에서는 제거 (유령 예약 정리)
-                            deleted = set(result.get("deleted_mirror_ids", []))
-                            if status == "not_found":
-                                deleted = {mid}
-                            if deleted:
-                                if mroom in room_busy:
-                                    room_busy[mroom] = [
-                                        span for span in room_busy[mroom]
-                                        if span != (ev["start"], ev["end"])
-                                    ]
-                                remaining = [
-                                    m for m in my_bookings.get(ev["id"], [])
-                                    if m["id"] not in deleted
-                                ]
-                                if remaining:
-                                    my_bookings[ev["id"]] = remaining
-                                else:
-                                    my_bookings.pop(ev["id"], None)
                             st.rerun()
                 row[6].write("—")
             else:
@@ -778,7 +740,6 @@ for weekday_idx, (tab, day_label) in _tab_iter:
             progress.empty()
 
             st.session_state[result_key] = batch_results
-            # invalidate_cache() 하지 않음 — 캐시는 위에서 in-place로 패치됨
             st.rerun()
 
 # ─────────────────────────────────────────

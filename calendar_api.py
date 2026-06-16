@@ -400,21 +400,14 @@ def _pick_korean_name(name_entries: list) -> str:
     return korean or fallback
 
 
-def _fetch_contact_names(cal_service) -> tuple[dict[str, str], str]:
-    """Google Contacts에서 팀원 이름 조회 (한국어 우선). 디버그 메시지도 반환."""
+def _fetch_contact_names(cal_service) -> dict[str, str]:
+    """Google Contacts에서 팀원 이름 조회 (한국어 우선)."""
     names: dict[str, str] = {}
-    debug_msg = ""
-    people_svc = None
     try:
         people_svc = build("people", "v1", http=cal_service._http)
-    except Exception as e:
-        debug_msg = f"Contacts API 서비스 빌드 실패: {e}"
-        return names, debug_msg
+    except Exception:
+        return names
 
-    total = 0
-    debug_parts: list[str] = []
-
-    # 저장된 연락처 (내 주소록)에서 팀원 이름 조회
     try:
         page_token = None
         while True:
@@ -425,15 +418,13 @@ def _fetch_contact_names(cal_service) -> tuple[dict[str, str], str]:
                 pageToken=page_token,
             ).execute()
             for person in result.get("connections", []):
-                total += 1
                 _match_contact(person, names)
             page_token = result.get("nextPageToken")
             if not page_token:
                 break
-        debug_msg = f"Contacts API: 연락처 {total}건 조회, 팀원 {len(names)}명 매칭"
-    except Exception as e:
-        debug_msg = f"Contacts API 실패: {e}"
-    return names, debug_msg
+    except Exception:
+        pass
+    return names
 
 
 def _match_contact(person: dict, names: dict) -> None:
@@ -451,7 +442,7 @@ def _match_contact(person: dict, names: dict) -> None:
             names[em] = display
 
 
-def build_email_to_name(events: list, service=None) -> dict[str, str]:
+def build_email_to_name(service=None) -> dict[str, str]:
     """
     팀원 이메일 → 한국어 이름.
     1순위: 내 연락처 (Contacts API)
@@ -460,9 +451,7 @@ def build_email_to_name(events: list, service=None) -> dict[str, str]:
     email_to_name: dict[str, str] = {}
 
     if service:
-        contact_names, _contacts_debug = _fetch_contact_names(service)
-        email_to_name.update(contact_names)
-        email_to_name["_debug_people_api"] = _contacts_debug
+        email_to_name.update(_fetch_contact_names(service))
 
     for email in TEAM_MAP:
         email_to_name.setdefault(email, email.split("@")[0])
